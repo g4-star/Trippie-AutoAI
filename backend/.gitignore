@@ -1,0 +1,16 @@
+# Backend secrets
+secrets/
+*.json
+
+# Environment files
+.env
+.env.*
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Python cache
+__pycache__/
+*.pyc
