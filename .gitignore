@@ -64,3 +64,5 @@ backend/secrets/
 # Local development backups
 *.before_*
 *.backup
+.vercel
+.env*
