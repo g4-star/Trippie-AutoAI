@@ -13,7 +13,6 @@ from app.routes.emails import router as emails_router
 from app.routes.gmail import router as gmail_router
 from app.routes.settings import router as settings_router
 from app.routes.agent import router as agent_router
-from app.services.agent_worker import start_agent_worker
 
 
 app = FastAPI(
@@ -26,7 +25,6 @@ app = FastAPI(
 @app.on_event("startup")
 def startup():
     Base.metadata.create_all(bind=engine)
-    start_agent_worker()
 
 
 @app.get("/")
