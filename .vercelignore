@@ -1,0 +1,37 @@
+# Flutter build artifacts
+build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Python virtual environments
+.venv/
+backend/.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Git and IDE files
+.git/
+.idea/
+*.iml
+
+# Local environment/secrets
+.env
+.env.*
+**/.env
+**/.env.*
+backend/secrets/
+
+# Flutter platform build/cache files
+android/.gradle/
+android/app/build/
+ios/Pods/
+macos/Pods/
+windows/flutter/ephemeral/
+linux/flutter/ephemeral/
+
+# Vercel local files
+.vercel/
