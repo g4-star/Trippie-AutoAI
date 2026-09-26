@@ -1,19 +1,18 @@
-from pathlib import Path
-
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-
-BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 class Settings(BaseSettings):
     app_name: str = "TrippieAutoAI"
-    debug: bool = True
+    debug: bool = False
 
-    database_url: str = f"sqlite:///{BASE_DIR / 'trippie_auto_ai.db'}"
+    database_url: str
+    secret_key: str
 
-    secret_key: str = "CHANGE_THIS_IN_PRODUCTION"
     access_token_expire_minutes: int = 60
+
+    ollama_url: str = "http://127.0.0.1:11434"
+    ollama_model: str = "qwen2.5:3b"
+    ollama_api_key: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=".env",

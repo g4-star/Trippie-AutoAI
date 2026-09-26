@@ -5,9 +5,7 @@ from typing import Any
 
 import httpx
 
-
-OLLAMA_URL = "http://127.0.0.1:11434"
-MODEL = "qwen2.5:3b"
+from app.config import settings
 
 
 def generate_json(
@@ -16,7 +14,7 @@ def generate_json(
     user_prompt: str,
 ) -> dict[str, Any]:
     payload = {
-        "model": MODEL,
+        "model": settings.ollama_model,
         "stream": False,
         "format": "json",
         "options": {
@@ -34,9 +32,17 @@ def generate_json(
         ],
     }
 
+    headers = {}
+
+    if settings.ollama_api_key:
+        headers["Authorization"] = (
+            f"Bearer {settings.ollama_api_key}"
+        )
+
     response = httpx.post(
-        f"{OLLAMA_URL}/api/chat",
+        f"{settings.ollama_url.rstrip('/')}/api/chat",
         json=payload,
+        headers=headers,
         timeout=httpx.Timeout(300.0, connect=10.0),
     )
 

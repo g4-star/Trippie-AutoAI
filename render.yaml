@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: trippie-autoai-api
+    runtime: python
+    rootDir: backend
+
+    buildCommand: pip install -r requirements.txt
+
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+
+    healthCheckPath: /api/health
+
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.13.5"
+
+      - key: DATABASE_URL
+        sync: false
+
+      - key: SECRET_KEY
+        generateValue: true
+
+      - key: DEBUG
+        value: "false"
+
+      - key: OLLAMA_URL
+        value: "https://ollama.com"
+
+      - key: OLLAMA_MODEL
+        value: "qwen3-coder:480b-cloud"
+
+      - key: OLLAMA_API_KEY
+        sync: false
