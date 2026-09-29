@@ -15,6 +15,10 @@ SKILL_PATTERNS = {
         "incident response",
         "vulnerability assessment",
         "vulnerability management",
+        "soc",
+        "security operations",
+        "penetration testing",
+        "ethical hacking",
     ],
     "linux": [
         "linux",
@@ -61,6 +65,7 @@ SKILL_PATTERNS = {
         "postgresql",
         "postgres",
         "database",
+        "relational database",
     ],
     "git": [
         "git",
@@ -71,6 +76,9 @@ SKILL_PATTERNS = {
     "javascript": [
         "javascript",
         "js",
+    ],
+    "typescript": [
+        "typescript",
     ],
     "react": [
         "react",
@@ -83,12 +91,21 @@ SKILL_PATTERNS = {
     "dart": [
         "dart",
     ],
+    "html": [
+        "html",
+        "html5",
+    ],
+    "css": [
+        "css",
+        "css3",
+    ],
     "supabase": [
         "supabase",
     ],
     "cloud": [
         "cloud",
         "aws",
+        "amazon web services",
         "azure",
         "google cloud",
         "gcp",
@@ -104,6 +121,128 @@ SKILL_PATTERNS = {
         "windows server",
         "windows administration",
         "windows server administration",
+        "active directory",
+    ],
+    "technical support": [
+        "technical support",
+        "tech support",
+        "help desk",
+        "helpdesk",
+        "desktop support",
+        "it support",
+    ],
+    "troubleshooting": [
+        "troubleshooting",
+        "technical troubleshooting",
+        "system troubleshooting",
+    ],
+    "ticketing": [
+        "ticketing system",
+        "ticket management",
+        "service desk",
+        "servicedesk",
+    ],
+    "hardware": [
+        "hardware support",
+        "computer hardware",
+        "hardware troubleshooting",
+    ],
+    "excel": [
+        "excel",
+        "microsoft excel",
+        "ms excel",
+        "spreadsheet",
+        "spreadsheets",
+    ],
+    "data analysis": [
+        "data analysis",
+        "data analytics",
+        "data analyst",
+        "analytical skills",
+        "analytics",
+    ],
+    "power bi": [
+        "power bi",
+        "powerbi",
+    ],
+    "tableau": [
+        "tableau",
+    ],
+    "statistics": [
+        "statistics",
+        "statistical analysis",
+    ],
+    "forecasting": [
+        "forecasting",
+        "forecast",
+        "demand forecasting",
+    ],
+    "demand planning": [
+        "demand planning",
+        "demand planner",
+    ],
+    "inventory management": [
+        "inventory management",
+        "inventory planning",
+        "inventory control",
+        "stock management",
+        "stock control",
+    ],
+    "supply chain": [
+        "supply chain",
+        "supply chain management",
+        "supply chain operations",
+    ],
+    "procurement": [
+        "procurement",
+        "procurement coordination",
+        "purchasing",
+        "purchasing operations",
+    ],
+    "purchase orders": [
+        "purchase order",
+        "purchase orders",
+        "po coordination",
+        "purchase order coordination",
+    ],
+    "supplier management": [
+        "supplier management",
+        "supplier follow-up",
+        "vendor management",
+        "vendor relations",
+    ],
+    "logistics": [
+        "logistics",
+        "warehouse",
+        "warehouse operations",
+        "warehousing",
+    ],
+    "project management": [
+        "project management",
+        "project coordination",
+        "project planning",
+    ],
+    "technical support": [
+        "technical support",
+        "it support",
+        "help desk",
+        "service desk",
+    ],
+    "troubleshooting": [
+        "troubleshooting",
+        "troubleshoot",
+        "technical troubleshooting",
+    ],
+    "documentation": [
+        "documentation",
+        "technical documentation",
+        "report writing",
+    ],
+    "communication": [
+        "communication skills",
+        "written communication",
+        "verbal communication",
+        "stakeholder communication",
     ],
 }
 
@@ -118,6 +257,7 @@ RESPONSIBILITY_PATTERNS = [
     "develop",
     "development",
     "implement",
+    "implementation",
     "maintain",
     "maintenance",
     "monitor",
@@ -135,6 +275,19 @@ RESPONSIBILITY_PATTERNS = [
     "assessment",
     "respond",
     "response",
+    "coordinate",
+    "coordination",
+    "forecast",
+    "forecasting",
+    "plan",
+    "planning",
+    "track",
+    "tracking",
+    "review",
+    "report",
+    "reporting",
+    "optimize",
+    "optimization",
 ]
 
 
@@ -239,7 +392,6 @@ def _extract_education(text: str) -> str | None:
 
 
 def _extract_responsibilities(text: str) -> list[str]:
-    # Split on bullets/new lines/sentence boundaries.
     chunks = re.split(
         r"[•·\n]+|(?<=[.!?])\s+",
         text,
@@ -247,82 +399,62 @@ def _extract_responsibilities(text: str) -> list[str]:
 
     responsibilities = []
 
+    action_starters = (
+        "administer", "configure", "deploy", "develop",
+        "implement", "maintain", "monitor", "manage",
+        "support", "troubleshoot", "analyze", "test",
+        "assess", "respond", "coordinate", "forecast",
+        "design", "build", "create", "automate",
+        "investigate", "resolve", "review", "document",
+        "lead", "deliver", "operate", "install",
+    )
+
     for chunk in chunks:
         clean = " ".join(chunk.split())
 
-        if len(clean) < 25:
+        if len(clean) < 25 or len(clean.split()) > 45:
             continue
 
         lower = clean.lower()
 
-        # Do not classify education, experience,
-        # qualifications, certifications, or skill-list
-        # entries as responsibilities.
-        if any(
-            marker in lower
-            for marker in [
-                "years of experience",
-                "years experience",
-                "minimum of",
-                "at least",
-                "bachelor",
-                "master",
-                "degree in",
-                "diploma",
-                "qualifications and experience",
-                "professional certifications",
-                "preferred technical skills",
-                "technical skills",
-                "key competencies",
-                "competencies",
-                "ability to",
-                "excellent communication",
-                "strong understanding",
-                "strong troubleshooting",
-                "strong analytical",
-            ]
-        ):
+        excluded_markers = (
+            "create a job alert",
+            "interested in building your career",
+            "job application",
+            "apply for this job",
+            "apply now",
+            "view all jobs",
+            "view more jobs",
+            "sign in",
+            "log in",
+            "privacy policy",
+            "terms of use",
+            "years of experience",
+            "years experience",
+            "minimum of",
+            "at least",
+            "bachelor",
+            "master",
+            "degree in",
+            "diploma",
+            "qualifications and experience",
+            "professional certifications",
+            "preferred technical skills",
+            "technical skills",
+            "key competencies",
+            "competencies",
+        )
+
+        if any(marker in lower for marker in excluded_markers):
             continue
 
-        # A short technical label is a skill, not a responsibility.
-        if (
-            len(clean.split()) <= 8
-            and (
-                "administration" in lower
-                or "management" in lower
-                or "skills" in lower
-                or lower.startswith("windows ")
-                or lower.startswith("linux ")
-                or lower.startswith("firewall ")
-                or lower.startswith("cybersecurity ")
-            )
-        ):
-            continue
+        first_word = re.sub(
+            r"^[^a-zA-Z]+",
+            "",
+            lower,
+        ).split(" ", 1)[0]
 
-        # Technical skill-list entries such as
-        # "Linux Administration (Ubuntu, Debian, Red Hat)"
-        # are skills, not responsibilities.
-        if (
-            len(clean.split()) <= 12
-            and (
-                "administration" in lower
-                or "management" in lower
-                or "virtualization" in lower
-                or "cloud platforms" in lower
-                or "network security" in lower
-                or "access control" in lower
-            )
-            and not re.search(
-                r"\b(will|responsible|candidate|role|perform|provide|support|conduct|install|create|manage|deploy|configure|maintain|monitor)\b",
-                lower,
-            )
-        ):
-            continue
-
-        if any(
-            keyword in lower
-            for keyword in RESPONSIBILITY_PATTERNS
-        ):
+        if first_word in action_starters:
             responsibilities.append(clean)
 
     unique = []
@@ -331,15 +463,17 @@ def _extract_responsibilities(text: str) -> list[str]:
         if item not in unique:
             unique.append(item)
 
-    return unique[:20]
+    return unique[:25]
+
 
 
 def analyze_job(job: Job) -> dict[str, Any]:
     """
     Analyze a raw job posting.
 
-    Education and experience are extracted separately for
-    transparency. They are NOT part of the match score.
+    Education and experience are extracted separately
+    for transparency and are never used as negative
+    match criteria.
     """
 
     title = _text(job.title)
@@ -351,6 +485,8 @@ def analyze_job(job: Job) -> dict[str, Any]:
             title,
             description,
             requirements,
+            _text(job.experience_requirements),
+            _text(job.education_requirements),
         ]
     )
 
@@ -362,12 +498,12 @@ def analyze_job(job: Job) -> dict[str, Any]:
 
     extracted_experience = (
         job.experience_requirements
-        or _extract_experience(description)
+        or _extract_experience(full_text)
     )
 
     extracted_education = (
         job.education_requirements
-        or _extract_education(description)
+        or _extract_education(full_text)
     )
 
     return {
@@ -376,6 +512,8 @@ def analyze_job(job: Job) -> dict[str, Any]:
         "company": job.company,
         "location": job.location,
         "skills": skills,
+        "required_skills": skills,
+        "preferred_skills": [],
         "responsibilities": responsibilities,
         "education_requirements": extracted_education,
         "experience_requirements": extracted_experience,

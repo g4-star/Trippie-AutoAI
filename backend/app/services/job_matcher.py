@@ -41,13 +41,6 @@ def _contains(text: str, term: str) -> bool:
 
 
 def _has_remote_work_mode(job: Job) -> bool:
-    """
-    Detect actual remote/hybrid work wording.
-
-    "Remote access" and "remote support" do not count
-    as a remote job.
-    """
-
     location = _text(job.location)
 
     location_terms = [
@@ -94,6 +87,9 @@ SKILL_ALIASES = {
         "incident response",
         "vulnerability assessment",
         "vulnerability management",
+        "soc",
+        "penetration testing",
+        "ethical hacking",
     ],
     "linux": [
         "linux",
@@ -151,6 +147,9 @@ SKILL_ALIASES = {
         "javascript",
         "js",
     ],
+    "typescript": [
+        "typescript",
+    ],
     "react": [
         "react",
         "react.js",
@@ -161,6 +160,14 @@ SKILL_ALIASES = {
     ],
     "dart": [
         "dart",
+    ],
+    "html": [
+        "html",
+        "html5",
+    ],
+    "css": [
+        "css",
+        "css3",
     ],
     "supabase": [
         "supabase",
@@ -183,6 +190,104 @@ SKILL_ALIASES = {
         "windows server",
         "windows administration",
         "windows server administration",
+        "active directory",
+    ],
+    "excel": [
+        "excel",
+        "microsoft excel",
+        "ms excel",
+        "spreadsheet",
+        "spreadsheets",
+    ],
+    "data analysis": [
+        "data analysis",
+        "data analytics",
+        "data analyst",
+        "analytical skills",
+        "analytics",
+    ],
+    "power bi": [
+        "power bi",
+        "powerbi",
+    ],
+    "tableau": [
+        "tableau",
+    ],
+    "statistics": [
+        "statistics",
+        "statistical analysis",
+    ],
+    "forecasting": [
+        "forecasting",
+        "forecast",
+        "demand forecasting",
+    ],
+    "demand planning": [
+        "demand planning",
+        "demand planner",
+    ],
+    "inventory management": [
+        "inventory management",
+        "inventory planning",
+        "inventory control",
+        "stock management",
+        "stock control",
+    ],
+    "supply chain": [
+        "supply chain",
+        "supply chain management",
+        "supply chain operations",
+    ],
+    "procurement": [
+        "procurement",
+        "procurement coordination",
+        "purchasing",
+        "purchasing operations",
+    ],
+    "purchase orders": [
+        "purchase order",
+        "purchase orders",
+        "po coordination",
+        "purchase order coordination",
+    ],
+    "supplier management": [
+        "supplier management",
+        "supplier follow-up",
+        "vendor management",
+        "vendor relations",
+    ],
+    "logistics": [
+        "logistics",
+        "warehouse",
+        "warehouse operations",
+        "warehousing",
+    ],
+    "project management": [
+        "project management",
+        "project coordination",
+        "project planning",
+    ],
+    "technical support": [
+        "technical support",
+        "it support",
+        "help desk",
+        "service desk",
+    ],
+    "troubleshooting": [
+        "troubleshooting",
+        "troubleshoot",
+        "technical troubleshooting",
+    ],
+    "documentation": [
+        "documentation",
+        "technical documentation",
+        "report writing",
+    ],
+    "communication": [
+        "communication skills",
+        "written communication",
+        "verbal communication",
+        "stakeholder communication",
     ],
 }
 
@@ -229,47 +334,62 @@ CATEGORY_ALIASES = {
         "business intelligence",
         "bi analyst",
     ],
+    "supply chain": [
+        "supply chain",
+        "supply chain management",
+        "supply chain operations",
+        "demand planning",
+        "inventory planning",
+        "procurement",
+        "logistics",
+        "warehouse",
+    ],
+    "operations": [
+        "operations",
+        "operations officer",
+        "operations analyst",
+        "business operations",
+    ],
 }
+
+
+def _canonical_skill(value: str) -> str:
+    value = value.strip().lower()
+
+    for canonical, aliases in SKILL_ALIASES.items():
+        if value == canonical:
+            return canonical
+
+        if value in aliases:
+            return canonical
+
+    return value
 
 
 def _find_skill_matches(
     analyzed_skills: list[str],
     user_skills: list[str],
 ) -> list[str]:
-    """
-    Match the user's skills against skills extracted by
-    the Job Analyzer.
-
-    This is intentionally skill-first.
-    """
-
     job_skills = {
         skill.strip().lower()
         for skill in analyzed_skills
         if skill.strip()
     }
 
+    canonical_job_skills = {
+        _canonical_skill(skill)
+        for skill in job_skills
+    }
+
     matches = []
 
     for user_skill in user_skills:
-        aliases = SKILL_ALIASES.get(
-            user_skill,
-            [user_skill],
-        )
+        canonical = _canonical_skill(user_skill)
 
-        if user_skill in job_skills:
-            matches.append(user_skill)
-            continue
+        if canonical in canonical_job_skills:
+            matches.append(canonical)
 
-        # Analyzer may identify a canonical skill while
-        # the user's profile uses a related alias.
-        if any(
-            alias in job_skills
-            for alias in aliases
-        ):
-            matches.append(user_skill)
-
-    return matches
+    return sorted(set(matches))
 
 
 def _find_category_matches(
@@ -280,6 +400,8 @@ def _find_category_matches(
     matches = []
 
     for category in categories:
+        category = category.strip().lower()
+
         aliases = CATEGORY_ALIASES.get(
             category,
             [category],
@@ -298,24 +420,17 @@ def _find_category_matches(
         ):
             matches.append(category)
 
-    return matches
+    return sorted(set(matches))
 
 
 def _responsibility_skill_alignment(
     analyzed_responsibilities: list[str],
     skill_hits: list[str],
 ) -> list[str]:
-    """
-    Identify responsibilities that contain evidence
-    related to the user's matched skills.
-    """
-
     aligned = []
 
     for responsibility in analyzed_responsibilities:
         text = responsibility.lower()
-
-        matched = False
 
         for skill in skill_hits:
             aliases = SKILL_ALIASES.get(
@@ -327,13 +442,25 @@ def _responsibility_skill_alignment(
                 _contains(text, alias)
                 for alias in aliases
             ):
-                matched = True
+                aligned.append(responsibility)
                 break
 
-        if matched:
-            aligned.append(responsibility)
-
     return aligned
+
+
+def _skill_gap_details(
+    analyzed_skills: list[str],
+    skill_hits: list[str],
+) -> list[str]:
+    matched = set(skill_hits)
+
+    return sorted(
+        {
+            _canonical_skill(skill)
+            for skill in analyzed_skills
+            if _canonical_skill(skill) not in matched
+        }
+    )
 
 
 def calculate_match(
@@ -341,10 +468,7 @@ def calculate_match(
     user: User,
 ) -> dict[str, Any]:
     """
-    Skill-first transparent job matching.
-
-    Education and experience are deliberately excluded
-    from scoring.
+    Transparent skill-first matching.
 
     Score:
         Skills:           55
@@ -352,14 +476,11 @@ def calculate_match(
         Responsibilities: 15
         Location:         10
 
-    Education: 0
-    Experience: 0
+    Education and experience are informational only.
     """
 
     title = _text(job.title)
-
     description = _text(job.description)
-
     requirements = _text(job.requirements)
 
     job_text = " ".join(
@@ -371,27 +492,20 @@ def calculate_match(
     )
 
     skills = _split_values(user.skills)
-
     categories = _split_values(
         user.preferred_categories
     )
-
     locations = _split_values(
         user.preferred_locations
     )
 
-    # ---------------------------------------------------------
-    # JOB ANALYSIS
-    # ---------------------------------------------------------
-
     analysis = analyze_job(job)
 
     analyzed_skills = analysis["skills"]
-
     responsibilities = analysis["responsibilities"]
 
     # ---------------------------------------------------------
-    # 1. SKILLS — 55 POINTS
+    # SKILLS — 55
     # ---------------------------------------------------------
 
     skill_hits = _find_skill_matches(
@@ -415,23 +529,21 @@ def calculate_match(
     else:
         skill_score = 0
 
+    reasons = []
+    concerns = []
+
     if skill_hits:
-        reasons = [
+        reasons.append(
             "Matching skills: "
-            + ", ".join(skill_hits[:10])
-        ]
+            + ", ".join(skill_hits[:12])
+        )
     else:
-        reasons = []
-
-    concerns: list[str] = []
-
-    if not skill_hits:
         concerns.append(
             "No profile skills matched the analyzed job skills."
         )
 
     # ---------------------------------------------------------
-    # 2. CATEGORY — 20 POINTS
+    # CATEGORY — 20
     # ---------------------------------------------------------
 
     category_hits = _find_category_matches(
@@ -445,7 +557,7 @@ def calculate_match(
 
         reasons.append(
             "Relevant job category: "
-            + ", ".join(category_hits[:4])
+            + ", ".join(category_hits[:5])
         )
     else:
         category_score = 0
@@ -455,7 +567,7 @@ def calculate_match(
         )
 
     # ---------------------------------------------------------
-    # 3. RESPONSIBILITIES — 15 POINTS
+    # RESPONSIBILITIES — 15
     # ---------------------------------------------------------
 
     aligned_responsibilities = (
@@ -479,12 +591,17 @@ def calculate_match(
 
     if aligned_responsibilities:
         reasons.append(
-            "Job responsibilities contain "
-            "evidence related to your matched skills."
+            "Some responsibilities align with "
+            "your matched skills."
+        )
+    else:
+        concerns.append(
+            "No analyzed responsibilities were directly "
+            "linked to your matched skills."
         )
 
     # ---------------------------------------------------------
-    # 4. LOCATION — 10 POINTS
+    # LOCATION — 10
     # ---------------------------------------------------------
 
     job_location = _text(job.location)
@@ -507,7 +624,7 @@ def calculate_match(
         location_score = 10
 
         reasons.append(
-            "Job explicitly supports remote work."
+            "Job explicitly supports remote or hybrid work."
         )
 
     elif not job_location:
@@ -526,7 +643,7 @@ def calculate_match(
         )
 
     # ---------------------------------------------------------
-    # FINAL SCORE
+    # FINAL
     # ---------------------------------------------------------
 
     score = min(
@@ -537,16 +654,33 @@ def calculate_match(
         + location_score,
     )
 
+    missing_skills = _skill_gap_details(
+        analyzed_skills,
+        skill_hits,
+    )
+
+    # This is descriptive rather than an automatic rejection.
+    if score >= 75:
+        fit_label = "strong_skill_alignment"
+    elif score >= 50:
+        fit_label = "moderate_skill_alignment"
+    else:
+        fit_label = "limited_skill_alignment"
+
     return {
         "score": score,
+        "fit_label": fit_label,
         "reasons": reasons,
         "concerns": concerns,
         "skill_matches": skill_hits,
-        "missing_skills": sorted(
-            set(analysis["skills"]) - set(skill_hits)
-        ),
+        "missing_skills": missing_skills,
         "category_matches": category_hits,
         "responsibility_matches": aligned_responsibilities,
+        "unmatched_responsibilities": [
+            item
+            for item in responsibilities
+            if item not in aligned_responsibilities
+        ],
         "skill_score": skill_score,
         "category_score": category_score,
         "responsibility_score": responsibility_score,
@@ -557,6 +691,8 @@ def calculate_match(
         "experience_requirements": analysis[
             "experience_requirements"
         ],
+        "analyzed_skills": analyzed_skills,
+        "analyzed_responsibilities": responsibilities,
     }
 
 
@@ -597,34 +733,35 @@ def match_jobs_for_user(
                 "company": job.company,
                 "location": job.location,
                 "score": result["score"],
+                "fit_label": result["fit_label"],
                 "reasons": result["reasons"],
                 "concerns": result["concerns"],
-                "skill_matches": result[
-                    "skill_matches"
-                ],
-                "category_matches": result[
-                    "category_matches"
-                ],
+                "skill_matches": result["skill_matches"],
+                "missing_skills": result["missing_skills"],
+                "category_matches": result["category_matches"],
                 "responsibility_matches": result[
                     "responsibility_matches"
                 ],
-                "skill_score": result[
-                    "skill_score"
+                "unmatched_responsibilities": result[
+                    "unmatched_responsibilities"
                 ],
-                "category_score": result[
-                    "category_score"
-                ],
+                "skill_score": result["skill_score"],
+                "category_score": result["category_score"],
                 "responsibility_score": result[
                     "responsibility_score"
                 ],
-                "location_score": result[
-                    "location_score"
-                ],
+                "location_score": result["location_score"],
                 "education_requirements": result[
                     "education_requirements"
                 ],
                 "experience_requirements": result[
                     "experience_requirements"
+                ],
+                "analyzed_skills": result[
+                    "analyzed_skills"
+                ],
+                "analyzed_responsibilities": result[
+                    "analyzed_responsibilities"
                 ],
             }
         )

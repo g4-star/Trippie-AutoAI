@@ -6,16 +6,6 @@ from app.services.sources.brighter_monday import discover_jobs
 
 
 def save_discovered_job(db: Session, job_data: dict) -> tuple[Job, bool]:
-    """
-    Save one normalized job.
-
-    Returns:
-        (job, created)
-
-    created=True  -> new job inserted
-    created=False -> existing job updated
-    """
-
     external_id = job_data.get("external_id")
 
     if not external_id:
@@ -25,22 +15,24 @@ def save_discovered_job(db: Session, job_data: dict) -> tuple[Job, bool]:
         select(Job).where(Job.external_id == external_id)
     )
 
+    fields = [
+        "title",
+        "company",
+        "location",
+        "description",
+        "requirements",
+        "experience_requirements",
+        "education_requirements",
+        "date_posted",
+        "valid_through",
+        "job_url",
+        "source",
+        "employment_type",
+        "salary",
+    ]
+
     if existing:
-        for field in [
-            "title",
-            "company",
-            "location",
-            "description",
-            "requirements",
-            "experience_requirements",
-            "education_requirements",
-            "date_posted",
-            "valid_through",
-            "job_url",
-            "source",
-            "employment_type",
-            "salary",
-        ]:
+        for field in fields:
             if field in job_data:
                 setattr(existing, field, job_data[field])
 
@@ -51,8 +43,8 @@ def save_discovered_job(db: Session, job_data: dict) -> tuple[Job, bool]:
 
     job = Job(
         external_id=external_id,
-        title=job_data["title"],
-        company=job_data["company"] or "Unknown",
+        title=job_data.get("title") or "Job opportunity",
+        company=job_data.get("company") or "Unknown",
         location=job_data.get("location"),
         description=job_data.get("description"),
         requirements=job_data.get("requirements"),
@@ -78,7 +70,8 @@ def discover_and_save_jobs(
     limit: int = 20,
 ) -> dict:
     """
-    Discover jobs from supported sources and save them to the database.
+    Legacy BrighterMonday discovery endpoint.
+    Kept for backwards compatibility.
     """
 
     discovered = discover_jobs(limit=limit)
@@ -86,7 +79,6 @@ def discover_and_save_jobs(
     created = 0
     updated = 0
     failed = 0
-
     saved_jobs = []
 
     for job_data in discovered:

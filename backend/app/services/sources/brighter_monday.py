@@ -90,6 +90,13 @@ def clean_text(value: Any) -> str | None:
     if not value:
         return None
 
+    # Avoid passing plain URLs to BeautifulSoup. BeautifulSoup warns
+    # when a string looks like a URL rather than HTML/XML.
+    lowered = value.lower()
+
+    if lowered.startswith(("http://", "https://", "www.")):
+        return value
+
     soup = BeautifulSoup(
         value,
         "html.parser",
@@ -323,13 +330,32 @@ def parse_job_page(url: str) -> dict[str, Any] | None:
     }
 
 
-def discover_job_urls(limit: int = 20) -> list[str]:
+def discover_job_urls(
+    limit: int = 20,
+    query: str | None = None,
+    page: int = 1,
+) -> list[str]:
     """
-    Discover actual BrighterMonday vacancy URLs from the jobs page.
+    Discover actual BrighterMonday vacancy URLs.
+
+    When ``query`` is provided, use BrighterMonday's public
+    search parameter instead of scanning the generic jobs page.
     """
+
+    params = {}
+
+    if query:
+        params["q"] = query
+
+    # BrighterMonday currently returns 404 when a filtered
+    # search uses both ``q`` and ``page``. Keep pagination
+    # available for the generic jobs page only.
+    if page > 1 and not query:
+        params["page"] = page
 
     response = requests.get(
         JOBS_URL,
+        params=params,
         headers=HEADERS,
         timeout=30,
     )
@@ -342,7 +368,7 @@ def discover_job_urls(limit: int = 20) -> list[str]:
     seen = set()
 
     for link in soup.find_all("a", href=True):
-        href = link["href"]
+        href = link.get("href", "")
 
         if "/listings/" not in href:
             continue

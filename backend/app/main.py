@@ -13,6 +13,7 @@ from app.routes.emails import router as emails_router
 from app.routes.gmail import router as gmail_router
 from app.routes.settings import router as settings_router
 from app.routes.agent import router as agent_router
+from app.routes.internet_discovery import router as internet_discovery_router
 
 
 app = FastAPI(
@@ -51,3 +52,4 @@ app.include_router(emails_router)
 app.include_router(gmail_router)
 app.include_router(settings_router)
 app.include_router(agent_router)
+app.include_router(internet_discovery_router)
