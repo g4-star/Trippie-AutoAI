@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models.job import Job
-from app.services.job_discovery import discover_and_save_jobs
+from app.services.discovery.discovery_engine import discover_internet_jobs
 from app.services.job_matcher import match_jobs_for_user
 
 
@@ -93,10 +93,10 @@ def get_job(
 
 @router.post("/discover")
 def discover_jobs_endpoint(
-    limit: int = 10,
+    user_id: int = 1,
     db: Session = Depends(get_db),
 ):
-    return discover_and_save_jobs(
+    return discover_internet_jobs(
         db=db,
-        limit=limit,
+        user_id=user_id,
     )
