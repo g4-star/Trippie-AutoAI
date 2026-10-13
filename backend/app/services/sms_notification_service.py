@@ -35,7 +35,9 @@ def notify_job_draft_ready(
         payload = response.json()
         data = payload.get("data") or {}
         messages = data.get("messages") or []
-        if not messages or str(messages[0].get("status", "")).lower() not in {"queued", "sent", "scheduled"}:
+        if not messages or str(messages[0].get("status", "")).lower() not in {
+            "queued", "sent", "scheduled", "success"
+        }:
             reason = str(messages[0].get("status") if messages else payload.get("response_code", "no message status"))
             logger.warning("ClickSend did not queue job-draft SMS: %s", reason)
             return False, f"ClickSend did not confirm the SMS was queued: {reason}"
