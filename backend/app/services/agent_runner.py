@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from sqlalchemy import select
@@ -8,7 +9,6 @@ from sqlalchemy.orm import Session
 
 from app.models.application import Application
 from app.models.email import Email
-from app.models.job import Job
 from app.models.settings import Settings
 from app.services.agent_controller import is_agent_running
 from app.services.application_engine import prepare_application
@@ -55,7 +55,8 @@ def run_agent(*, db: Session, user_id: int) -> dict[str, Any]:
         result["jobs"]["updated"] = discovery.get("updated", 0)
 
     if not is_agent_running(db, user_id):
-        return {"status": "stopped", "message": "Agent stopped during job discovery.", **result}
+        result.update(status="stopped", message="Agent stopped during job discovery.")
+        return result
 
     matching = match_jobs_for_user(db=db, user_id=user_id)
     matches = matching.get("matches", [])
@@ -68,11 +69,14 @@ def run_agent(*, db: Session, user_id: int) -> dict[str, Any]:
     # Application-email automation is strictly draft-only. It never calls a send endpoint.
     if is_agent_running(db, user_id):
         try:
+            configured_limit = int(os.getenv(
+                "JOB_EMAIL_DRAFT_DAILY_LIMIT", str(settings.daily_application_limit)
+            ))
             draft_result = create_job_application_drafts(
                 db=db,
                 user_id=user_id,
                 matches=eligible_matches,
-                daily_limit=settings.daily_application_limit,
+                daily_limit=max(0, configured_limit),
             )
             result["jobs"]["email_drafts_created"] = draft_result.get("created", 0)
             result["jobs"]["email_drafts_failed"] = draft_result.get("failed", 0)
@@ -106,14 +110,16 @@ def run_agent(*, db: Session, user_id: int) -> dict[str, Any]:
         result["jobs"]["applications_prepared"] = prepared_count
 
     if not is_agent_running(db, user_id):
-        return {"status": "stopped", "message": "Agent stopped during application processing.", **result}
+        result.update(status="stopped", message="Agent stopped during application processing.")
+        return result
 
     if settings.email_monitoring and is_agent_running(db, user_id):
         email_result = sync_gmail(db=db, user_id=user_id, max_messages=50)
         result["email"]["synced"] = email_result.get("created", 0) + email_result.get("updated", 0)
 
     if not is_agent_running(db, user_id):
-        return {"status": "stopped", "message": "Agent stopped during email processing.", **result}
+        result.update(status="stopped", message="Agent stopped during email processing.")
+        return result
 
     if settings.email_monitoring and settings.auto_reply and is_agent_running(db, user_id):
         emails = db.scalars(select(Email).where(Email.user_id == user_id)).all()
