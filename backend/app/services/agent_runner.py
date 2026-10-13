@@ -10,8 +10,9 @@ from app.models.job import Job
 from app.models.settings import Settings
 from app.services.agent_controller import is_agent_running
 from app.services.application_engine import prepare_application
+from app.services.application_submission import submit_application
 from app.services.gmail_service import sync_gmail
-from app.services.job_discovery import discover_and_save_jobs
+from app.services.discovery import discover_internet_jobs
 from app.services.job_matcher import match_jobs_for_user
 from app.services.reply_workflow import generate_pending_reply
 
@@ -57,6 +58,9 @@ def run_agent(
             "updated": 0,
             "matched": 0,
             "applications_prepared": 0,
+            "applications_submitted": 0,
+            "applications_manual": 0,
+            "applications_failed": 0,
         },
         "email": {
             "synced": 0,
@@ -72,9 +76,11 @@ def run_agent(
         settings.automatic_job_discovery
         and is_agent_running(db, user_id)
     ):
-        discovery = discover_and_save_jobs(
+        discovery = discover_internet_jobs(
             db=db,
-            limit=20,
+            user_id=user_id,
+            queries_per_cycle=8,
+            results_per_query=5,
         )
 
         result["jobs"]["discovered"] = discovery.get(
@@ -157,8 +163,34 @@ def run_agent(
                 job_id=job_id,
             )
 
-            if prepared.get("success"):
-                prepared_count += 1
+            if not prepared.get("success"):
+                continue
+
+            prepared_count += 1
+
+            application_id = prepared.get("application_id")
+
+            if not application_id:
+                continue
+
+            # Attempt real submission through the authorized
+            # submission layer. Unsupported providers are
+            # automatically marked for manual action.
+            submission = submit_application(
+                db=db,
+                application_id=application_id,
+            )
+
+            submission_status = submission.get("status")
+
+            if submission_status == "submitted":
+                result["jobs"]["applications_submitted"] += 1
+
+            elif submission_status == "manual_action_required":
+                result["jobs"]["applications_manual"] += 1
+
+            elif submission_status == "submission_failed":
+                result["jobs"]["applications_failed"] += 1
 
             if prepared_count >= settings.daily_application_limit:
                 break
@@ -245,6 +277,12 @@ def run_agent(
             generated_count
         )
 
-    result["message"] = "AI Agent cycle completed."
+    result["message"] = (
+        "AI Agent cycle completed. "
+        f"Prepared: {result["jobs"]["applications_prepared"]}, "
+        f"Submitted: {result["jobs"]["applications_submitted"]}, "
+        f"Manual action: {result["jobs"]["applications_manual"]}, "
+        f"Failed: {result["jobs"]["applications_failed"]}."
+    )
 
     return result

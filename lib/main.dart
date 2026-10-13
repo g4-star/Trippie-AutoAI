@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'services/api_service.dart';
+import 'services/auth_service.dart';
 
 void main() {
   runApp(const TrippieAutoAI());
@@ -66,17 +68,265 @@ class LockScreen extends StatefulWidget {
 }
 
 class _LockScreenState extends State<LockScreen> {
-  final TextEditingController _pinController = TextEditingController();
+  final AuthService _authService = AuthService();
+
+  final TextEditingController _credentialController =
+      TextEditingController();
+  final TextEditingController _confirmPinController =
+      TextEditingController();
+
+  bool _loading = true;
+  bool _setupMode = false;
+  bool _passwordMode = false;
+  bool _obscureCredential = true;
+  bool _obscureConfirmPin = true;
+  bool _biometricsAvailable = false;
   String? _error;
 
-  void _unlock() {
-    if (_pinController.text.isEmpty) {
+  @override
+  void initState() {
+    super.initState();
+    _initializeLock();
+  }
+
+  Future<void> _initializeLock() async {
+    try {
+      final hasPin = await _authService.hasPin();
+      final canUseBiometrics = await _authService.canUseBiometrics();
+      final hasEnrolledBiometrics =
+          await _authService.hasEnrolledBiometrics();
+
+      if (!mounted) {
+        return;
+      }
+
       setState(() {
-        _error = 'Enter your PIN to continue';
+        _setupMode = !hasPin;
+        _biometricsAvailable =
+            canUseBiometrics && hasEnrolledBiometrics;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _loading = false;
+        _error = 'Unable to initialize app security.';
+      });
+    }
+  }
+
+  Future<void> _unlock() async {
+    FocusScope.of(context).unfocus();
+
+    final credential = _credentialController.text.trim();
+
+    if (credential.isEmpty) {
+      setState(() {
+        _error = _passwordMode
+            ? 'Enter your password to continue.'
+            : 'Enter your PIN to continue.';
       });
       return;
     }
 
+    if (_passwordMode) {
+      await _unlockWithPassword(credential);
+    } else {
+      await _unlockWithPin(credential);
+    }
+  }
+
+  Future<void> _unlockWithPin(String pin) async {
+    setState(() {
+      _error = null;
+      _loading = true;
+    });
+
+    try {
+      if (_setupMode) {
+        final confirmation = _confirmPinController.text.trim();
+
+        if (!RegExp(r'^\d{4,8}$').hasMatch(pin)) {
+          setState(() {
+            _loading = false;
+            _error = 'PIN must contain 4 to 8 digits.';
+          });
+          return;
+        }
+
+        if (pin != confirmation) {
+          setState(() {
+            _loading = false;
+            _error = 'PINs do not match.';
+          });
+          return;
+        }
+
+        await _authService.savePin(pin);
+
+        if (!mounted) {
+          return;
+        }
+
+        setState(() {
+          _setupMode = false;
+          _loading = false;
+          _error = null;
+          _credentialController.clear();
+          _confirmPinController.clear();
+        });
+
+        _showMessage('PIN created successfully. TrippieAutoAI is unlocked.');
+        _openApp();
+        return;
+      }
+
+      final valid = await _authService.verifyPin(pin);
+
+      if (!mounted) {
+        return;
+      }
+
+      if (!valid) {
+        setState(() {
+          _loading = false;
+          _error = 'Incorrect PIN.';
+        });
+        return;
+      }
+
+      setState(() {
+        _loading = false;
+        _error = null;
+      });
+
+      _openApp();
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _loading = false;
+        _error = 'PIN verification failed.';
+      });
+    }
+  }
+
+  Future<void> _unlockWithPassword(String password) async {
+    setState(() {
+      _error = null;
+      _loading = true;
+    });
+
+    try {
+      final hasPassword = await _authService.hasPassword();
+
+      if (!hasPassword) {
+        if (!mounted) {
+          return;
+        }
+
+        setState(() {
+          _loading = false;
+          _error = 'No password has been configured yet.';
+        });
+        return;
+      }
+
+      final valid = await _authService.verifyPassword(password);
+
+      if (!mounted) {
+        return;
+      }
+
+      if (!valid) {
+        setState(() {
+          _loading = false;
+          _error = 'Incorrect password.';
+        });
+        return;
+      }
+
+      setState(() {
+        _loading = false;
+        _error = null;
+      });
+
+      _openApp();
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _loading = false;
+        _error = 'Password verification failed.';
+      });
+    }
+  }
+
+  Future<void> _unlockWithBiometrics() async {
+    setState(() {
+      _error = null;
+      _loading = true;
+    });
+
+    try {
+      final canUse = await _authService.canUseBiometrics();
+      final enrolled = await _authService.hasEnrolledBiometrics();
+
+      if (!canUse || !enrolled) {
+        if (!mounted) {
+          return;
+        }
+
+        setState(() {
+          _loading = false;
+          _error =
+              'Fingerprint or biometric authentication is not available. '
+              'Set up a fingerprint in your phone settings first.';
+        });
+        return;
+      }
+
+      final authenticated =
+          await _authService.authenticateWithBiometrics();
+
+      if (!mounted) {
+        return;
+      }
+
+      if (!authenticated) {
+        setState(() {
+          _loading = false;
+          _error = 'Biometric authentication was not successful.';
+        });
+        return;
+      }
+
+      setState(() {
+        _loading = false;
+        _error = null;
+      });
+
+      _openApp();
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _loading = false;
+        _error = 'Biometric authentication failed.';
+      });
+    }
+  }
+
+  void _openApp() {
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
         builder: (_) => MainShell(
@@ -87,14 +337,39 @@ class _LockScreenState extends State<LockScreen> {
     );
   }
 
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
+  }
+
+  void _togglePasswordMode() {
+    setState(() {
+      _passwordMode = !_passwordMode;
+      _error = null;
+      _credentialController.clear();
+    });
+  }
+
   @override
   void dispose() {
-    _pinController.dispose();
+    _credentialController.dispose();
+    _confirmPinController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    if (_loading && !_setupMode) {
+      return const Scaffold(
+        body: Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+    }
+
     return Scaffold(
       body: SafeArea(
         child: Center(
@@ -123,22 +398,27 @@ class _LockScreenState extends State<LockScreen> {
                   const SizedBox(height: 24),
                   const Text(
                     'TrippieAutoAI',
-                    style: TextStyle(fontSize: 30, fontWeight: FontWeight.bold),
+                    style: TextStyle(
+                      fontSize: 30,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                   const SizedBox(height: 8),
                   Text(
                     'Your personal AI job agent',
                     style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.55),
+                      color: isDark
+                          ? Colors.white.withValues(alpha: 0.55)
+                          : Colors.black54,
                       fontSize: 15,
                     ),
                   ),
                   const SizedBox(height: 52),
-                  const Align(
+                  Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
-                      'Welcome back',
-                      style: TextStyle(
+                      _setupMode ? 'Secure your app' : 'Welcome back',
+                      style: const TextStyle(
                         fontSize: 24,
                         fontWeight: FontWeight.bold,
                       ),
@@ -148,26 +428,50 @@ class _LockScreenState extends State<LockScreen> {
                   Align(
                     alignment: Alignment.centerLeft,
                     child: Text(
-                      'Unlock TrippieAutoAI to continue.',
+                      _setupMode
+                          ? 'Create a secure PIN to protect TrippieAutoAI.'
+                          : 'Unlock TrippieAutoAI to continue.',
                       style: TextStyle(
-                        color: Colors.white.withValues(alpha: 0.55),
+                        color: isDark
+                            ? Colors.white.withValues(alpha: 0.55)
+                            : Colors.black54,
                       ),
                     ),
                   ),
                   const SizedBox(height: 28),
                   TextField(
-                    controller: _pinController,
-                    obscureText: true,
-                    keyboardType: TextInputType.number,
-                    maxLength: 8,
+                    controller: _credentialController,
+                    obscureText: _obscureCredential,
+                    keyboardType: _passwordMode
+                        ? TextInputType.text
+                        : TextInputType.number,
+                    maxLength: _passwordMode ? 64 : 8,
                     decoration: InputDecoration(
-                      labelText: 'PIN',
-                      hintText: 'Enter your PIN',
-                      prefixIcon: const Icon(Icons.lock_outline_rounded),
+                      labelText: _passwordMode ? 'Password' : 'PIN',
+                      hintText: _passwordMode
+                          ? 'Enter your password'
+                          : 'Enter your PIN',
+                      prefixIcon: Icon(
+                        _passwordMode
+                            ? Icons.password_rounded
+                            : Icons.lock_outline_rounded,
+                      ),
+                      suffixIcon: IconButton(
+                        onPressed: () {
+                          setState(() {
+                            _obscureCredential =
+                                !_obscureCredential;
+                          });
+                        },
+                        icon: Icon(
+                          _obscureCredential
+                              ? Icons.visibility_off
+                              : Icons.visibility,
+                        ),
+                      ),
                       errorText: _error,
                       counterText: '',
                       filled: true,
-                      fillColor: const Color(0xFF11151F),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(18),
                         borderSide: BorderSide.none,
@@ -175,44 +479,103 @@ class _LockScreenState extends State<LockScreen> {
                     ),
                     onSubmitted: (_) => _unlock(),
                   ),
+                  if (_setupMode) ...[
+                    const SizedBox(height: 14),
+                    TextField(
+                      controller: _confirmPinController,
+                      obscureText: _obscureConfirmPin,
+                      keyboardType: TextInputType.number,
+                      maxLength: 8,
+                      decoration: InputDecoration(
+                        labelText: 'Confirm PIN',
+                        hintText: 'Enter the PIN again',
+                        prefixIcon: const Icon(
+                          Icons.verified_user_outlined,
+                        ),
+                        suffixIcon: IconButton(
+                          onPressed: () {
+                            setState(() {
+                              _obscureConfirmPin =
+                                  !_obscureConfirmPin;
+                            });
+                          },
+                          icon: Icon(
+                            _obscureConfirmPin
+                                ? Icons.visibility_off
+                                : Icons.visibility,
+                          ),
+                        ),
+                        counterText: '',
+                        filled: true,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(18),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                      onSubmitted: (_) => _unlock(),
+                    ),
+                  ],
                   const SizedBox(height: 14),
                   SizedBox(
                     width: double.infinity,
                     height: 54,
                     child: FilledButton(
-                      onPressed: _unlock,
-                      child: const Text(
-                        'Unlock',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
+                      onPressed: _loading ? null : _unlock,
+                      child: _loading
+                          ? const SizedBox(
+                              width: 22,
+                              height: 22,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                              ),
+                            )
+                          : Text(
+                              _setupMode ? 'Create PIN' : 'Unlock',
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                    ),
+                  ),
+                  if (!_setupMode) ...[
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 54,
+                      child: OutlinedButton.icon(
+                        onPressed: _loading ||
+                                !_biometricsAvailable
+                            ? null
+                            : _unlockWithBiometrics,
+                        icon: const Icon(Icons.fingerprint),
+                        label: Text(
+                          _biometricsAvailable
+                              ? 'Use fingerprint'
+                              : 'Fingerprint unavailable',
                         ),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 14),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 54,
-                    child: OutlinedButton.icon(
+                    const SizedBox(height: 12),
+                    TextButton(
+                      onPressed: _togglePasswordMode,
+                      child: Text(
+                        _passwordMode
+                            ? 'Use PIN instead'
+                            : 'Use password instead',
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    TextButton(
                       onPressed: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                            content: Text(
-                              'Biometric authentication will be connected next.',
-                            ),
-                          ),
+                        _showMessage(
+                          'Password/PIN recovery will be added through '
+                          'the secure account recovery flow.',
                         );
                       },
-                      icon: const Icon(Icons.fingerprint),
-                      label: const Text('Use fingerprint'),
+                      child: const Text('Forgot PIN or password?'),
                     ),
-                  ),
-                  const SizedBox(height: 22),
-                  TextButton(
-                    onPressed: () {},
-                    child: const Text('Forgot PIN?'),
-                  ),
+                  ],
                 ],
               ),
             ),
@@ -1676,7 +2039,8 @@ class _PrepareApplicationButton extends StatefulWidget {
       _PrepareApplicationButtonState();
 }
 
-class _PrepareApplicationButtonState extends State<_PrepareApplicationButton> {
+class _PrepareApplicationButtonState
+    extends State<_PrepareApplicationButton> {
   bool _loading = false;
 
   Future<void> _prepare() async {
@@ -1689,29 +2053,44 @@ class _PrepareApplicationButtonState extends State<_PrepareApplicationButton> {
     });
 
     try {
-      final result = await ApiService.prepareApplication(1, widget.jobId);
+      final result = await ApiService.prepareApplication(
+        1,
+        widget.jobId,
+      );
 
       if (!mounted) return;
 
       final status = result['status']?.toString() ?? 'prepared';
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            status == 'prepared'
-                ? 'Application prepared successfully.'
-                : 'Application status: $status',
+      if (status != 'prepared') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Application status: $status'),
+            behavior: SnackBarBehavior.floating,
           ),
-          behavior: SnackBarBehavior.floating,
+        );
+        return;
+      }
+
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => ApplicationReviewPage(
+            application: result,
+          ),
         ),
       );
     } catch (error) {
       if (!mounted) return;
 
-      final message = error.toString().replaceFirst('Exception: ', '');
+      final message = error
+          .toString()
+          .replaceFirst('Exception: ', '');
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
+        SnackBar(
+          content: Text(message),
+          behavior: SnackBarBehavior.floating,
+        ),
       );
     } finally {
       if (mounted) {
@@ -1730,12 +2109,393 @@ class _PrepareApplicationButtonState extends State<_PrepareApplicationButton> {
           ? const SizedBox(
               width: 20,
               height: 20,
-              child: CircularProgressIndicator(strokeWidth: 2),
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+              ),
             )
           : const Icon(Icons.auto_awesome_rounded),
       label: Text(
-        _loading ? 'Preparing...' : 'Prepare Application',
-        style: const TextStyle(fontWeight: FontWeight.bold),
+        _loading
+            ? 'Preparing...'
+            : 'Prepare & Review Application',
+        style: const TextStyle(
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+  }
+}
+
+class ApplicationReviewPage extends StatelessWidget {
+  final Map<String, dynamic> application;
+
+  const ApplicationReviewPage({
+    super.key,
+    required this.application,
+  });
+
+  Future<void> _openApplicationUrl(
+    BuildContext context,
+    String url,
+  ) async {
+    final uri = Uri.tryParse(url);
+
+    if (uri == null ||
+        !uri.hasScheme ||
+        (uri.scheme != 'http' && uri.scheme != 'https')) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('The application link is invalid.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+
+    try {
+      final opened = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
+
+      if (!opened && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Could not open the application page.'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } catch (_) {
+      if (!context.mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not open the application page.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final job = application['job'] is Map
+        ? Map<String, dynamic>.from(
+            application['job'] as Map,
+          )
+        : <String, dynamic>{};
+
+    final title =
+        job['title']?.toString() ?? 'Untitled Job';
+
+    final company =
+        job['company']?.toString() ?? 'Unknown Company';
+
+    final applicationUrl =
+        job['application_url']?.toString() ??
+        application['application_url']?.toString() ??
+        '';
+
+    final coverLetter =
+        application['cover_letter']?.toString() ?? '';
+
+    final matchScore =
+        (application['match_score'] as num?)?.toInt() ?? 0;
+
+    final matchedSkills =
+        (application['matched_skills'] as List<dynamic>? ?? [])
+            .map((item) => item.toString())
+            .toList();
+
+    final missingSkills =
+        (application['missing_skills'] as List<dynamic>? ?? [])
+            .map((item) => item.toString())
+            .toList();
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Review Application'),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(
+          20,
+          12,
+          20,
+          32,
+        ),
+        children: [
+          Container(
+            padding: const EdgeInsets.all(18),
+            decoration: BoxDecoration(
+              color: const Color(0xFF11151F),
+              borderRadius: BorderRadius.circular(18),
+              border: Border.all(
+                color: const Color(0xFF222938),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  company,
+                  style: const TextStyle(
+                    color: Colors.white60,
+                    fontSize: 15,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    const Icon(
+                      Icons.auto_awesome_rounded,
+                      size: 18,
+                      color: Colors.blueAccent,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '$matchScore% match',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.blueAccent,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: 24),
+
+          const Text(
+            'Application readiness',
+            style: TextStyle(
+              fontSize: 19,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+
+          const SizedBox(height: 10),
+
+          const _ApplicationStep(
+            icon: Icons.check_circle_rounded,
+            title: 'Application prepared',
+            subtitle: 'Your application has been generated.',
+          ),
+
+          const _ApplicationStep(
+            icon: Icons.rate_review_outlined,
+            title: 'Review before applying',
+            subtitle: 'Check the generated information and cover letter.',
+          ),
+
+          const _ApplicationStep(
+            icon: Icons.open_in_browser_rounded,
+            title: 'Apply on the official site',
+            subtitle: 'TrippieAutoAI will open the employer application page.',
+          ),
+
+          const SizedBox(height: 24),
+
+          if (matchedSkills.isNotEmpty) ...[
+            const Text(
+              'Matched skills',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: matchedSkills
+                  .map(
+                    (skill) => Chip(
+                      avatar: const Icon(
+                        Icons.check_rounded,
+                        size: 16,
+                      ),
+                      label: Text(skill),
+                    ),
+                  )
+                  .toList(),
+            ),
+            const SizedBox(height: 20),
+          ],
+
+          if (missingSkills.isNotEmpty) ...[
+            const Text(
+              'Skills not identified in your profile',
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              missingSkills.join(', '),
+              style: const TextStyle(
+                color: Colors.white60,
+                height: 1.5,
+              ),
+            ),
+            const SizedBox(height: 24),
+          ],
+
+          const Text(
+            'Generated cover letter',
+            style: TextStyle(
+              fontSize: 19,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+
+          const SizedBox(height: 10),
+
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: const Color(0xFF0D1119),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: const Color(0xFF222938),
+              ),
+            ),
+            child: SelectableText(
+              coverLetter.isEmpty
+                  ? 'No cover letter was generated.'
+                  : coverLetter,
+              style: const TextStyle(
+                color: Colors.white70,
+                height: 1.55,
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 28),
+
+          if (applicationUrl.isNotEmpty)
+            SizedBox(
+              height: 54,
+              child: FilledButton.icon(
+                onPressed: () => _openApplicationUrl(
+                  context,
+                  applicationUrl,
+                ),
+                icon: const Icon(
+                  Icons.open_in_new_rounded,
+                ),
+                label: const Text(
+                  'Open Official Application Page',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+
+          const SizedBox(height: 12),
+
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: Colors.orangeAccent.withValues(
+                alpha: 0.08,
+              ),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: Colors.orangeAccent.withValues(
+                  alpha: 0.25,
+                ),
+              ),
+            ),
+            child: const Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  Icons.info_outline_rounded,
+                  color: Colors.orangeAccent,
+                  size: 20,
+                ),
+                SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'TrippieAutoAI does not claim that an application '
+                    'was submitted automatically. Submit the application '
+                    'on the official site, then record the result in the app.',
+                    style: TextStyle(
+                      color: Colors.white60,
+                      height: 1.45,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ApplicationStep extends StatelessWidget {
+  final IconData icon;
+  final String title;
+  final String subtitle;
+
+  const _ApplicationStep({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(
+            icon,
+            color: Colors.greenAccent,
+            size: 22,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  subtitle,
+                  style: const TextStyle(
+                    color: Colors.white54,
+                    fontSize: 13,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

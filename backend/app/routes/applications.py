@@ -191,11 +191,20 @@ def update_application_status(
             detail="Application not found.",
         )
 
+    # A normal status update must never claim that an application
+    # was submitted. Submission is recorded only by a real
+    # submission workflow after a successful authorized submission.
+    if status == "submitted":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Applications cannot be marked submitted manually. "
+                "Use the authorized submission workflow after the "
+                "application has actually been submitted."
+            ),
+        )
+
     application.status = status
-
-    if status == "submitted" and application.submitted_at is None:
-        application.submitted_at = datetime.utcnow()
-
     application.updated_at = datetime.utcnow()
 
     db.commit()
