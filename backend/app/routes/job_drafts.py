@@ -19,11 +19,14 @@ router = APIRouter(prefix="/api/job-drafts", tags=["Job Application Drafts"])
 
 
 @router.get("/gmail/connect")
-def connect_gmail_for_job_drafts(request: Request):
+def connect_gmail_for_job_drafts(
+    request: Request, db: Session = Depends(get_db)
+):
     redirect_uri = str(request.url_for("job_gmail_draft_callback"))
     try:
         return RedirectResponse(
-            url=get_draft_authorization_url(redirect_uri), status_code=302
+            url=get_draft_authorization_url(redirect_uri=redirect_uri, db=db),
+            status_code=302,
         )
     except Exception as error:
         raise HTTPException(
@@ -41,6 +44,8 @@ def gmail_draft_callback(request: Request, db: Session = Depends(get_db)):
     try:
         complete_draft_authorization(
             authorization_response=str(request.url),
+            state=request.query_params.get("state", ""),
+            redirect_uri=str(request.url_for("job_gmail_draft_callback")),
             db=db,
             user_id=int(os.getenv("AUTOAI_USER_ID", "1")),
         )

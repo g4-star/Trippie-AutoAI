@@ -7,6 +7,7 @@ from app.database import Base, engine
 from app import models  # noqa: F401
 from app.models.job_email_draft import JobEmailDraft  # noqa: F401
 from app.models.gmail_draft_authorization import GmailDraftAuthorization  # noqa: F401
+from app.models.gmail_oauth_transaction import GmailOAuthTransaction  # noqa: F401
 from app.routes.profile import router as profile_router
 from app.routes.jobs import router as jobs_router
 from app.routes.applications import router as applications_router

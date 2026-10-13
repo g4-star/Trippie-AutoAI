@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 from email.message import EmailMessage
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models.gmail_draft_authorization import GmailDraftAuthorization
+from app.models.gmail_oauth_transaction import GmailOAuthTransaction
 
 
 BASE_DIR = Path(__file__).resolve().parents[2]
@@ -26,8 +28,6 @@ CREDENTIALS_FILE = Path(os.getenv("GMAIL_CREDENTIALS_PATH", str(DEFAULT_CREDENTI
 # Only compose access is requested. The user reviews and sends directly in Gmail.
 SCOPES = ["https://www.googleapis.com/auth/gmail.compose"]
 
-_pending_flow: Flow | None = None
-_pending_state: str | None = None
 
 
 def _client_config() -> dict[str, Any]:
@@ -66,41 +66,83 @@ def _decrypt_credentials(encrypted: str) -> str:
         ) from error
 
 
-def get_draft_authorization_url(redirect_uri: str) -> str:
-    global _pending_flow, _pending_state
-    _pending_flow = Flow.from_client_config(
+def get_draft_authorization_url(*, redirect_uri: str, db: Session) -> str:
+    flow = Flow.from_client_config(
         _client_config(), scopes=SCOPES, redirect_uri=redirect_uri
     )
-    url, _pending_state = _pending_flow.authorization_url(
+    url, state = flow.authorization_url(
         access_type="offline", include_granted_scopes="true", prompt="consent"
     )
+
+    # Remove expired transactions and persist this transaction before redirecting.
+    cutoff = datetime.utcnow() - timedelta(minutes=10)
+    db.query(GmailOAuthTransaction).filter(
+        GmailOAuthTransaction.created_at < cutoff
+    ).delete(synchronize_session=False)
+
+    db.add(GmailOAuthTransaction(state=state, redirect_uri=redirect_uri))
+    db.commit()
     return url
 
 
 def complete_draft_authorization(
-    *, authorization_response: str, db: Session, user_id: int
+    *,
+    authorization_response: str,
+    state: str,
+    redirect_uri: str,
+    db: Session,
+    user_id: int,
 ) -> None:
-    global _pending_flow, _pending_state
-    if _pending_flow is None or not _pending_state:
-        raise RuntimeError("No pending job-draft Gmail authorization. Start the connection again.")
-    flow = _pending_flow
+    if not state:
+        raise RuntimeError("OAuth state is missing. Start Gmail connection again.")
+
+    transaction = db.get(GmailOAuthTransaction, state)
+    if transaction is None:
+        raise RuntimeError(
+            "Gmail authorization state is invalid, expired, or already used. "
+            "Start the connection again."
+        )
+
+    if transaction.redirect_uri != redirect_uri:
+        raise RuntimeError(
+            "Gmail callback URL differs from the original authorization URL. "
+            "Check the production domain and Google OAuth redirect URI."
+        )
+
+    if datetime.utcnow() - transaction.created_at > timedelta(minutes=10):
+        db.delete(transaction)
+        db.commit()
+        raise RuntimeError("Gmail authorization expired. Start the connection again.")
+
+    # Rebuild the flow in this request and require Google's returned state to match.
+    flow = Flow.from_client_config(
+        _client_config(),
+        scopes=SCOPES,
+        state=state,
+        redirect_uri=redirect_uri,
+    )
     flow.fetch_token(authorization_response=authorization_response)
+
     serialized = flow.credentials.to_json()
     record = db.scalar(
-        select(GmailDraftAuthorization).where(GmailDraftAuthorization.user_id == user_id)
+        select(GmailDraftAuthorization).where(
+            GmailDraftAuthorization.user_id == user_id
+        )
     )
+    encrypted = _encrypt_credentials(serialized)
+
     if record is None:
         record = GmailDraftAuthorization(
-            user_id=user_id, credentials_encrypted=_encrypt_credentials(serialized)
+            user_id=user_id, credentials_encrypted=encrypted
         )
         db.add(record)
     else:
-        record.credentials_encrypted = _encrypt_credentials(serialized)
-        from datetime import datetime
+        record.credentials_encrypted = encrypted
         record.updated_at = datetime.utcnow()
+
+    # Consume the state and save the encrypted credentials in one transaction.
+    db.delete(transaction)
     db.commit()
-    _pending_flow = None
-    _pending_state = None
 
 
 def _get_draft_credentials(*, db: Session, user_id: int) -> Credentials:
