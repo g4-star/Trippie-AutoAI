@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: trippie-autoai-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ENABLE_BACKGROUND_WORKER
+        value: "true"
+      - key: AUTO_DRAFT_JOB_EMAILS
+        value: "true"
+      - key: AUTOAI_USER_ID
+        value: "1"
+      - key: AGENT_CYCLE_INTERVAL_SECONDS
+        value: "900"
+      - key: JOB_EMAIL_DRAFT_DAILY_LIMIT
+        value: "10"
+      - key: GMAIL_CLIENT_CONFIG_JSON
+        sync: false
+      - key: GMAIL_DRAFT_TOKEN_PATH
+        value: /var/data/gmail_draft_token.json
+      - key: PORTFOLIO_URL
+        value: https://dickson-kiprono.vercel.app
+    disk:
+      name: trippie-autoai-gmail-token
+      mountPath: /var/data
+      sizeGB: 1
