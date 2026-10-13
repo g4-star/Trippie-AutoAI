@@ -10,7 +10,6 @@ from sqlalchemy.orm import Session
 
 from app.models.job import Job
 from app.models.job_email_draft import JobEmailDraft
-from app.models.settings import Settings
 from app.models.user import User
 from app.services.gmail_draft_service import create_gmail_draft
 from app.services.job_matcher import calculate_match
@@ -21,9 +20,7 @@ IGNORED_EMAIL_PARTS = ("noreply", "no-reply", "donotreply", "example.com", "test
 
 
 def _recipient_for(job: Job) -> str | None:
-    source_text = "\n".join(
-        value for value in (job.description, job.requirements) if value
-    )
+    source_text = "\n".join(value for value in (job.description, job.requirements) if value)
     for candidate in EMAIL_PATTERN.findall(source_text):
         email = candidate.strip(".,;:()[]{}<>").lower()
         if any(part in email for part in IGNORED_EMAIL_PARTS):
@@ -44,7 +41,6 @@ def _make_email(user: User, job: Job, match: dict[str, Any]) -> tuple[str, str]:
     portfolio = os.getenv("PORTFOLIO_URL", "https://dickson-kiprono.vercel.app")
     linkedin = "https://www.linkedin.com/in/dickson-sang-265737386/"
     github = "https://github.com/g4-star"
-
     body = (
         f"Dear Hiring Team,\n\n"
         f"I am writing to apply for the {title} opportunity at {company}. "
@@ -55,14 +51,10 @@ def _make_email(user: User, job: Job, match: dict[str, Any]) -> tuple[str, str]:
         f"ready to demonstrate relevant work, learn your team's processes, and be "
         f"transparent about the experience and skills I currently have.\n\n"
         f"My portfolio, including my projects and professional profile, is available here:\n"
-        f"Portfolio: {portfolio}\n"
-        f"GitHub: {github}\n"
-        f"LinkedIn: {linkedin}\n\n"
+        f"Portfolio: {portfolio}\nGitHub: {github}\nLinkedIn: {linkedin}\n\n"
         f"I would appreciate the opportunity to discuss how I could contribute to "
         f"{company}. Thank you for your time and consideration.\n\n"
-        f"Kind regards,\n"
-        f"{user.full_name}\n"
-        f"{user.email}"
+        f"Kind regards,\n{user.full_name}\n{user.email}"
         + (f"\n{user.phone}" if user.phone else "")
     )
     return subject, body
@@ -104,7 +96,6 @@ def create_job_application_drafts(
         if not job_id:
             skipped += 1
             continue
-
         job = db.get(Job, int(job_id))
         if not job or not job.is_active:
             skipped += 1
@@ -129,13 +120,8 @@ def create_job_application_drafts(
         subject, body = _make_email(user, job, match)
         if existing is None:
             existing = JobEmailDraft(
-                user_id=user_id,
-                job_id=job.id,
-                recipient_email=recipient,
-                subject=subject,
-                body=body,
-                match_score=score,
-                status="pending",
+                user_id=user_id, job_id=job.id, recipient_email=recipient,
+                subject=subject, body=body, match_score=score, status="pending",
             )
             db.add(existing)
         else:
@@ -149,7 +135,9 @@ def create_job_application_drafts(
         db.refresh(existing)
 
         try:
-            result = create_gmail_draft(to=recipient, subject=subject, body=body)
+            result = create_gmail_draft(
+                db=db, user_id=user_id, to=recipient, subject=subject, body=body
+            )
             existing.gmail_draft_id = result["draft_id"]
             existing.gmail_draft_url = result["url"]
             existing.status = "created"
