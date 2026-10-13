@@ -4,7 +4,7 @@ import base64
 import hashlib
 import json
 import os
-from email.mime.text import MIMEText
+from email.message import EmailMessage
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +23,7 @@ from app.models.gmail_draft_authorization import GmailDraftAuthorization
 BASE_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_CREDENTIALS_FILE = BASE_DIR / "secrets" / "credentials.json"
 CREDENTIALS_FILE = Path(os.getenv("GMAIL_CREDENTIALS_PATH", str(DEFAULT_CREDENTIALS_FILE)))
+# Only compose access is requested. The user reviews and sends directly in Gmail.
 SCOPES = ["https://www.googleapis.com/auth/gmail.compose"]
 
 _pending_flow: Flow | None = None
@@ -68,23 +69,16 @@ def _decrypt_credentials(encrypted: str) -> str:
 def get_draft_authorization_url(redirect_uri: str) -> str:
     global _pending_flow, _pending_state
     _pending_flow = Flow.from_client_config(
-        _client_config(),
-        scopes=SCOPES,
-        redirect_uri=redirect_uri,
+        _client_config(), scopes=SCOPES, redirect_uri=redirect_uri
     )
     url, _pending_state = _pending_flow.authorization_url(
-        access_type="offline",
-        include_granted_scopes="true",
-        prompt="consent",
+        access_type="offline", include_granted_scopes="true", prompt="consent"
     )
     return url
 
 
 def complete_draft_authorization(
-    *,
-    authorization_response: str,
-    db: Session,
-    user_id: int,
+    *, authorization_response: str, db: Session, user_id: int
 ) -> None:
     global _pending_flow, _pending_state
     if _pending_flow is None or not _pending_state:
@@ -93,19 +87,17 @@ def complete_draft_authorization(
     flow.fetch_token(authorization_response=authorization_response)
     serialized = flow.credentials.to_json()
     record = db.scalar(
-        select(GmailDraftAuthorization).where(
-            GmailDraftAuthorization.user_id == user_id
-        )
+        select(GmailDraftAuthorization).where(GmailDraftAuthorization.user_id == user_id)
     )
     if record is None:
         record = GmailDraftAuthorization(
-            user_id=user_id,
-            credentials_encrypted=_encrypt_credentials(serialized),
+            user_id=user_id, credentials_encrypted=_encrypt_credentials(serialized)
         )
         db.add(record)
     else:
         record.credentials_encrypted = _encrypt_credentials(serialized)
-        record.updated_at = __import__("datetime").datetime.utcnow()
+        from datetime import datetime
+        record.updated_at = datetime.utcnow()
     db.commit()
     _pending_flow = None
     _pending_state = None
@@ -113,9 +105,7 @@ def complete_draft_authorization(
 
 def _get_draft_credentials(*, db: Session, user_id: int) -> Credentials:
     record = db.scalar(
-        select(GmailDraftAuthorization).where(
-            GmailDraftAuthorization.user_id == user_id
-        )
+        select(GmailDraftAuthorization).where(GmailDraftAuthorization.user_id == user_id)
     )
     if not record:
         raise RuntimeError(
@@ -123,13 +113,13 @@ def _get_draft_credentials(*, db: Session, user_id: int) -> Credentials:
             "/api/job-drafts/gmail/connect to authorize draft creation."
         )
     credentials = Credentials.from_authorized_user_info(
-        json.loads(_decrypt_credentials(record.credentials_encrypted)),
-        scopes=SCOPES,
+        json.loads(_decrypt_credentials(record.credentials_encrypted)), scopes=SCOPES
     )
     if credentials.expired and credentials.refresh_token:
         credentials.refresh(Request())
         record.credentials_encrypted = _encrypt_credentials(credentials.to_json())
-        record.updated_at = __import__("datetime").datetime.utcnow()
+        from datetime import datetime
+        record.updated_at = datetime.utcnow()
         db.commit()
     if not credentials.valid:
         raise RuntimeError("Gmail draft authorization is expired or invalid; reconnect Gmail.")
@@ -137,25 +127,22 @@ def _get_draft_credentials(*, db: Session, user_id: int) -> Credentials:
 
 
 def create_gmail_draft(
-    *,
-    db: Session,
-    user_id: int,
-    to: str,
-    subject: str,
-    body: str,
+    *, db: Session, user_id: int, to: str, subject: str, body: str, body_html: str | None = None
 ) -> dict[str, str]:
     if not to or "@" not in to:
         raise ValueError("A verified recipient email is required.")
     if not subject.strip() or not body.strip():
         raise ValueError("Draft subject and body are required.")
 
-    message = MIMEText(body.strip(), "plain", "utf-8")
+    message = EmailMessage()
     message["To"] = to
     message["Subject"] = subject.strip()
+    message.set_content(body.strip())
+    if body_html:
+        message.add_alternative(body_html, subtype="html")
     raw = base64.urlsafe_b64encode(message.as_bytes()).decode("ascii")
     gmail = build(
-        "gmail", "v1",
-        credentials=_get_draft_credentials(db=db, user_id=user_id),
+        "gmail", "v1", credentials=_get_draft_credentials(db=db, user_id=user_id),
         cache_discovery=False,
     )
     result = gmail.users().drafts().create(

@@ -23,5 +23,11 @@ services:
         value: "10"
       - key: GMAIL_CLIENT_CONFIG_JSON
         sync: false
+      - key: CLICKSEND_USERNAME
+        sync: false
+      - key: CLICKSEND_API_KEY
+        sync: false
+      - key: AUTOAI_NOTIFY_PHONE
+        sync: false
       - key: PORTFOLIO_URL
         value: https://dickson-kiprono.vercel.app

@@ -50,7 +50,7 @@ def gmail_draft_callback(request: Request, db: Session = Depends(get_db)):
         ) from error
     return {
         "status": "connected",
-        "message": "Gmail is authorized for job-application draft creation. Trippie AutoAI will not send these drafts.",
+        "message": "Gmail is authorized to create job-application drafts. Review and send each email manually in Gmail.",
     }
 
 
@@ -77,10 +77,13 @@ def list_job_application_drafts(
                 "recipient_email": draft.recipient_email,
                 "subject": draft.subject,
                 "body": draft.body,
+                "body_html": draft.body_html,
                 "match_score": draft.match_score,
                 "status": draft.status,
                 "gmail_draft_id": draft.gmail_draft_id,
                 "gmail_draft_url": draft.gmail_draft_url,
+                "notification_sent": draft.notification_sent,
+                "notification_error": draft.notification_error,
                 "error": draft.error,
                 "created_at": draft.created_at,
                 "updated_at": draft.updated_at,
