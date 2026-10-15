@@ -37,7 +37,7 @@ class _TrippieAutoAIState extends State<TrippieAutoAI> {
         useMaterial3: true,
         scaffoldBackgroundColor: const Color(0xFFF5F6FA),
         colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.deepPurple,
+          seedColor: const Color(0xFF007F68),
           brightness: Brightness.light,
         ),
       ),
@@ -46,7 +46,7 @@ class _TrippieAutoAIState extends State<TrippieAutoAI> {
         useMaterial3: true,
         scaffoldBackgroundColor: const Color(0xFF080B12),
         colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.deepPurple,
+          seedColor: const Color(0xFF19E6A5),
           brightness: Brightness.dark,
         ),
       ),
@@ -622,6 +622,7 @@ class _MainShellState extends State<MainShell> {
     const DashboardPage(),
     const JobsPage(),
     const ApplicationsPage(),
+    const DocumentsPage(),
     const EmailPage(),
     SettingsPage(
       onThemeChanged: widget.onThemeChanged,
@@ -661,6 +662,11 @@ class _MainShellState extends State<MainShell> {
             icon: Icon(Icons.description_outlined),
             selectedIcon: Icon(Icons.description_rounded),
             label: 'Applications',
+          ),
+          NavigationDestination(
+            icon: Icon(Icons.picture_as_pdf_outlined),
+            selectedIcon: Icon(Icons.picture_as_pdf_rounded),
+            label: 'CV',
           ),
           NavigationDestination(
             icon: Icon(Icons.mail_outline_rounded),
