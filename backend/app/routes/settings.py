@@ -6,7 +6,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.routes.auth import get_current_user
+from app.models.user import User
 from app.models.settings import Settings
+from app.services.agent_worker import start_agent_worker, stop_agent_worker
 
 
 router = APIRouter(
@@ -95,8 +98,12 @@ def _response(settings: Settings) -> dict:
 @router.get("/{user_id}", response_model=SettingsResponse)
 def get_settings(
     user_id: int,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    if user_id != current_user.id:
+        raise HTTPException(status_code=403, detail='Access denied.')
+
     settings = _get_or_create_settings(
         user_id,
         db,
@@ -110,7 +117,11 @@ def update_settings(
     user_id: int,
     payload: SettingsUpdate,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    if user_id != current_user.id:
+        raise HTTPException(status_code=403, detail='Access denied.')
+
     settings = _get_or_create_settings(
         user_id,
         db,
@@ -131,5 +142,11 @@ def update_settings(
     # remain in force.
     db.commit()
     db.refresh(settings)
+
+    if settings.agent_enabled:
+        if user_id == int(__import__('os').getenv('AUTOAI_USER_ID', '1')):
+            start_agent_worker()
+    elif user_id == int(__import__('os').getenv('AUTOAI_USER_ID', '1')):
+        stop_agent_worker()
 
     return _response(settings)

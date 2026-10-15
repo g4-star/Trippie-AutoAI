@@ -24,8 +24,6 @@ logger = logging.getLogger(__name__)
 
 # Public ATS/company sources that can be queried without login.
 GREENHOUSE_BOARDS = [
-    "https://boards.greenhouse.io/andela",
-    "https://boards.greenhouse.io/flutterwave",
     "https://boards.greenhouse.io/moniepoint",
     "https://boards.greenhouse.io/wise",
     "https://boards.greenhouse.io/stripe",
@@ -139,8 +137,8 @@ def discover_internet_jobs(
     *,
     db: Session,
     user_id: int,
-    queries_per_cycle: int = 8,
-    results_per_query: int = 10,
+    queries_per_cycle: int = 2,
+    results_per_query: int = 5,
 ) -> dict:
 
     ensure_discovery_state_table()

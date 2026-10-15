@@ -12,6 +12,9 @@ __all__ = [
     "Email",
     "Settings",
     "EmailReply",
+    "UserDocument",
 ]
 
 from .discovery_state import DiscoveryState
+
+from app.models.user_document import UserDocument

@@ -3,6 +3,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.routes.auth import get_current_user
 from app.models.user import User
 
 
@@ -56,43 +57,21 @@ def profile_response(user: User) -> dict:
 
 
 @router.post("")
-def create_profile(
-    profile: ProfileCreate,
-    db: Session = Depends(get_db),
-):
-    existing = db.query(User).filter(User.email == profile.email).first()
-
-    if existing:
-        raise HTTPException(
-            status_code=409,
-            detail="A profile with this email already exists.",
-        )
-
-    user = User(
-        full_name=profile.full_name,
-        email=profile.email,
-        phone=profile.phone,
-        bio=profile.bio,
-        skills=profile.skills,
-        preferred_categories=profile.preferred_categories,
-        preferred_locations=profile.preferred_locations,
-        work_preference=profile.work_preference,
-        experience_level=profile.experience_level,
-        minimum_salary=profile.minimum_salary,
+def create_profile():
+    raise HTTPException(
+        status_code=410,
+        detail="Public profile creation is disabled. Use /api/auth/register.",
     )
-
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-
-    return profile_response(user)
-
 
 @router.get("/{user_id}")
 def get_profile(
     user_id: int,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    if user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Forbidden.")
+
     user = db.query(User).filter(User.id == user_id).first()
 
     if not user:
@@ -109,7 +88,11 @@ def update_profile(
     user_id: int,
     profile: ProfileUpdate,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    if user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Forbidden.")
+
     user = db.query(User).filter(User.id == user_id).first()
 
     if not user:

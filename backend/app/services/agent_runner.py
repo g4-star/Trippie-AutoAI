@@ -54,13 +54,14 @@ def run_agent(*, db: Session, user_id: int) -> dict[str, Any]:
     }
 
     # JOB DISCOVERY
+    logger.info("Agent cycle: starting discovery for user %s", user_id)
     if settings.automatic_job_discovery and is_agent_running(db, user_id):
         try:
             discovery = discover_internet_jobs(
                 db=db,
                 user_id=user_id,
-                queries_per_cycle=8,
-                results_per_query=5,
+                queries_per_cycle=2,
+                results_per_query=3,
             )
         except Exception:
             logger.exception("Internet discovery failed; trying the legacy source.")
@@ -70,6 +71,7 @@ def run_agent(*, db: Session, user_id: int) -> dict[str, Any]:
                 logger.exception("Both job discovery sources failed.")
                 discovery = {}
 
+        logger.info("Agent cycle: discovery returned %s", discovery)
         for key in ("discovered", "created", "updated"):
             result["jobs"][key] = discovery.get(key, 0)
 
@@ -81,7 +83,9 @@ def run_agent(*, db: Session, user_id: int) -> dict[str, Any]:
         return result
 
     # MATCH JOBS USING THE EXISTING SKILLS-FIRST MATCHER.
+    logger.info("Agent cycle: starting job matching for user %s", user_id)
     matching = match_jobs_for_user(db=db, user_id=user_id)
+    logger.info("Agent cycle: matching finished for user %s", user_id)
     matches = matching.get("matches", [])
     eligible_matches = [
         match for match in matches
@@ -191,17 +195,27 @@ def run_agent(*, db: Session, user_id: int) -> dict[str, Any]:
         )
         return result
 
-    # GMAIL MONITORING.
+    logger.info("Agent cycle: reaching Gmail stage for user %s", user_id)
+    # GMAIL MONITORING. Gmail authentication/network errors must not
+    # abort job discovery and matching.
     if settings.email_monitoring and is_agent_running(db, user_id):
-        email_result = sync_gmail(
-            db=db,
-            user_id=user_id,
-            max_messages=50,
-        )
-        result["email"]["synced"] = (
-            email_result.get("created", 0)
-            + email_result.get("updated", 0)
-        )
+        try:
+            logger.info("Agent cycle: starting Gmail sync for user %s", user_id)
+            email_result = sync_gmail(
+                db=db,
+                user_id=user_id,
+                max_messages=50,
+            )
+            result["email"]["synced"] = (
+                email_result.get("created", 0)
+                + email_result.get("updated", 0)
+            )
+            result["email"]["status"] = "ok"
+            logger.info("Agent cycle: Gmail sync finished for user %s", user_id)
+        except Exception as error:
+            logger.exception("Gmail sync failed; continuing agent cycle.")
+            result["email"]["status"] = "error"
+            result["email"]["error"] = str(error)[:300]
 
     if not is_agent_running(db, user_id):
         result.update(

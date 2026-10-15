@@ -57,3 +57,7 @@ google-auth
 google-auth-httplib2
 google-auth-oauthlib
 psycopg[binary]==3.3.6
+
+vercel==0.11.6
+python-multipart==0.0.32
+pypdf==6.20.1

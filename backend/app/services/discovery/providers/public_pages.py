@@ -22,7 +22,7 @@ HEADERS = {
     )
 }
 
-TIMEOUT = 20
+TIMEOUT = 5
 
 
 class PublicPageProvider(DiscoveryProvider):

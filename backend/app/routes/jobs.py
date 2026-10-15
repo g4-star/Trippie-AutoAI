@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.models.user import User
+from app.routes.auth import get_current_user
 from app.models.job import Job
 from app.services.discovery.discovery_engine import discover_internet_jobs
 from app.services.job_matcher import match_jobs_for_user
@@ -53,7 +55,11 @@ def get_jobs(
 def match_jobs_endpoint(
     user_id: int,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    if user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Forbidden.")
+
     return match_jobs_for_user(
         db=db,
         user_id=user_id,
@@ -93,10 +99,10 @@ def get_job(
 
 @router.post("/discover")
 def discover_jobs_endpoint(
-    user_id: int = 1,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     return discover_internet_jobs(
         db=db,
-        user_id=user_id,
+        user_id=current_user.id,
     )

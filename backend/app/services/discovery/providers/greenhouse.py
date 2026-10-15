@@ -20,7 +20,7 @@ HEADERS = {
     )
 }
 
-TIMEOUT = 20
+TIMEOUT = 5
 
 
 class GreenhouseProvider(DiscoveryProvider):
@@ -207,10 +207,7 @@ class GreenhouseProvider(DiscoveryProvider):
 
                 seen.add(job_url)
 
-                page_text, company = self._fetch_job_page(
-                    job_url,
-                    token,
-                )
+                page_text, company = "", token
 
                 results.append({
                     "external_id": (

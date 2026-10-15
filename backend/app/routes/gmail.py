@@ -7,6 +7,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.models.user import User
+from app.routes.auth import get_current_user
 from app.models.email import Email
 from app.models.email_reply import EmailReply
 from app.models.settings import Settings
@@ -87,7 +89,11 @@ def generate_ai_reply(
     user_id: int,
     email_id: int,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    if user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Forbidden.")
+
     try:
         return generate_pending_reply(
             user_id=user_id,
@@ -110,7 +116,11 @@ def generate_ai_reply(
 def list_pending_replies(
     user_id: int,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    if user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Forbidden.")
+
     replies = db.scalars(
         select(EmailReply)
         .where(
@@ -157,7 +167,11 @@ def update_reply_draft(
     reply_id: int,
     payload: GmailReplyRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    if user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Forbidden.")
+
     reply = db.scalar(
         select(EmailReply).where(
             EmailReply.id == reply_id,
@@ -206,7 +220,11 @@ def approve_and_send_reply(
     user_id: int,
     reply_id: int,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    if user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Forbidden.")
+
     reply = db.scalar(
         select(EmailReply).where(
             EmailReply.id == reply_id,
@@ -360,7 +378,11 @@ def reject_reply(
     user_id: int,
     reply_id: int,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    if user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Forbidden.")
+
     reply = db.scalar(
         select(EmailReply).where(
             EmailReply.id == reply_id,
@@ -400,7 +422,11 @@ def send_reply(
     email_id: int,
     payload: GmailReplyRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    if user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Forbidden.")
+
     raise HTTPException(
         status_code=410,
         detail=(
@@ -415,7 +441,11 @@ def send_reply(
 def sync_gmail_messages(
     user_id: int,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    if user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Forbidden.")
+
     try:
         return sync_gmail(
             db=db,

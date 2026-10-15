@@ -289,7 +289,7 @@ class BrighterMondayProvider(DiscoveryProvider):
 
         try:
             urls = discover_job_urls(
-                limit=max(limit * 8, 40),
+                limit=min(max(limit * 2, 6), 10),
                 query=query,
             )
         except Exception as exc:

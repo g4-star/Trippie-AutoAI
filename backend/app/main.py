@@ -8,6 +8,8 @@ from app import models  # noqa: F401
 from app.models.job_email_draft import JobEmailDraft  # noqa: F401
 from app.models.gmail_draft_authorization import GmailDraftAuthorization  # noqa: F401
 from app.models.gmail_oauth_transaction import GmailOAuthTransaction  # noqa: F401
+from app.routes.auth import router as auth_router
+from app.routes.documents import router as documents_router
 from app.routes.profile import router as profile_router
 from app.routes.jobs import router as jobs_router
 from app.routes.applications import router as applications_router
@@ -56,6 +58,8 @@ def health():
     return {"status": "healthy", "database": "connected"}
 
 
+app.include_router(auth_router)
+app.include_router(documents_router)
 app.include_router(profile_router)
 app.include_router(jobs_router)
 app.include_router(applications_router)

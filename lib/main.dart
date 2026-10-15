@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import 'services/api_service.dart';
 import 'services/auth_service.dart';
+import 'screens/documents_page.dart';
 
 void main() {
   runApp(const TrippieAutoAI());
@@ -70,10 +72,8 @@ class LockScreen extends StatefulWidget {
 class _LockScreenState extends State<LockScreen> {
   final AuthService _authService = AuthService();
 
-  final TextEditingController _credentialController =
-      TextEditingController();
-  final TextEditingController _confirmPinController =
-      TextEditingController();
+  final TextEditingController _credentialController = TextEditingController();
+  final TextEditingController _confirmPinController = TextEditingController();
 
   bool _loading = true;
   bool _setupMode = false;
@@ -81,6 +81,7 @@ class _LockScreenState extends State<LockScreen> {
   bool _obscureCredential = true;
   bool _obscureConfirmPin = true;
   bool _biometricsAvailable = false;
+  bool _passwordEnabled = false;
   String? _error;
 
   @override
@@ -93,8 +94,12 @@ class _LockScreenState extends State<LockScreen> {
     try {
       final hasPin = await _authService.hasPin();
       final canUseBiometrics = await _authService.canUseBiometrics();
-      final hasEnrolledBiometrics =
-          await _authService.hasEnrolledBiometrics();
+      final hasEnrolledBiometrics = await _authService.hasEnrolledBiometrics();
+      final prefs = await SharedPreferences.getInstance();
+      final biometricsEnabled =
+          prefs.getBool('security_biometrics_enabled') ?? false;
+      final passwordEnabled =
+          prefs.getBool('security_password_enabled') ?? false;
 
       if (!mounted) {
         return;
@@ -103,7 +108,8 @@ class _LockScreenState extends State<LockScreen> {
       setState(() {
         _setupMode = !hasPin;
         _biometricsAvailable =
-            canUseBiometrics && hasEnrolledBiometrics;
+            biometricsEnabled && canUseBiometrics && hasEnrolledBiometrics;
+        _passwordEnabled = passwordEnabled;
         _loading = false;
       });
     } catch (_) {
@@ -223,6 +229,16 @@ class _LockScreenState extends State<LockScreen> {
     });
 
     try {
+      final prefs = await SharedPreferences.getInstance();
+      if (!(prefs.getBool('security_password_enabled') ?? false)) {
+        if (!mounted) return;
+        setState(() {
+          _loading = false;
+          _error = 'Password unlock is disabled in Settings.';
+        });
+        return;
+      }
+
       final hasPassword = await _authService.hasPassword();
 
       if (!hasPassword) {
@@ -276,6 +292,16 @@ class _LockScreenState extends State<LockScreen> {
     });
 
     try {
+      final prefs = await SharedPreferences.getInstance();
+      if (!(prefs.getBool('security_biometrics_enabled') ?? false)) {
+        if (!mounted) return;
+        setState(() {
+          _loading = false;
+          _error = 'Biometric unlock is disabled in Settings.';
+        });
+        return;
+      }
+
       final canUse = await _authService.canUseBiometrics();
       final enrolled = await _authService.hasEnrolledBiometrics();
 
@@ -293,8 +319,7 @@ class _LockScreenState extends State<LockScreen> {
         return;
       }
 
-      final authenticated =
-          await _authService.authenticateWithBiometrics();
+      final authenticated = await _authService.authenticateWithBiometrics();
 
       if (!mounted) {
         return;
@@ -338,12 +363,12 @@ class _LockScreenState extends State<LockScreen> {
   }
 
   void _showMessage(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   void _togglePasswordMode() {
+    if (!_passwordEnabled) return;
     setState(() {
       _passwordMode = !_passwordMode;
       _error = null;
@@ -363,11 +388,7 @@ class _LockScreenState extends State<LockScreen> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     if (_loading && !_setupMode) {
-      return const Scaffold(
-        body: Center(
-          child: CircularProgressIndicator(),
-        ),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     return Scaffold(
@@ -398,10 +419,7 @@ class _LockScreenState extends State<LockScreen> {
                   const SizedBox(height: 24),
                   const Text(
                     'TrippieAutoAI',
-                    style: TextStyle(
-                      fontSize: 30,
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: TextStyle(fontSize: 30, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 8),
                   Text(
@@ -459,8 +477,7 @@ class _LockScreenState extends State<LockScreen> {
                       suffixIcon: IconButton(
                         onPressed: () {
                           setState(() {
-                            _obscureCredential =
-                                !_obscureCredential;
+                            _obscureCredential = !_obscureCredential;
                           });
                         },
                         icon: Icon(
@@ -489,14 +506,11 @@ class _LockScreenState extends State<LockScreen> {
                       decoration: InputDecoration(
                         labelText: 'Confirm PIN',
                         hintText: 'Enter the PIN again',
-                        prefixIcon: const Icon(
-                          Icons.verified_user_outlined,
-                        ),
+                        prefixIcon: const Icon(Icons.verified_user_outlined),
                         suffixIcon: IconButton(
                           onPressed: () {
                             setState(() {
-                              _obscureConfirmPin =
-                                  !_obscureConfirmPin;
+                              _obscureConfirmPin = !_obscureConfirmPin;
                             });
                           },
                           icon: Icon(
@@ -525,9 +539,7 @@ class _LockScreenState extends State<LockScreen> {
                           ? const SizedBox(
                               width: 22,
                               height: 22,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                              ),
+                              child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : Text(
                               _setupMode ? 'Create PIN' : 'Unlock',
@@ -544,8 +556,7 @@ class _LockScreenState extends State<LockScreen> {
                       width: double.infinity,
                       height: 54,
                       child: OutlinedButton.icon(
-                        onPressed: _loading ||
-                                !_biometricsAvailable
+                        onPressed: _loading || !_biometricsAvailable
                             ? null
                             : _unlockWithBiometrics,
                         icon: const Icon(Icons.fingerprint),
@@ -558,11 +569,15 @@ class _LockScreenState extends State<LockScreen> {
                     ),
                     const SizedBox(height: 12),
                     TextButton(
-                      onPressed: _togglePasswordMode,
+                      onPressed: _loading || !_passwordEnabled
+                          ? null
+                          : _togglePasswordMode,
                       child: Text(
                         _passwordMode
                             ? 'Use PIN instead'
-                            : 'Use password instead',
+                            : (_passwordEnabled
+                                  ? 'Use password instead'
+                                  : 'Password unlock disabled'),
                       ),
                     ),
                     const SizedBox(height: 4),
@@ -619,13 +634,18 @@ class _MainShellState extends State<MainShell> {
     return Scaffold(
       body: IndexedStack(index: _currentIndex, children: _pages),
       bottomNavigationBar: NavigationBar(
+        height: 72,
+        elevation: 8,
+        labelBehavior: NavigationDestinationLabelBehavior.onlyShowSelected,
+        animationDuration: const Duration(milliseconds: 300),
         selectedIndex: _currentIndex,
         onDestinationSelected: (index) {
           setState(() {
             _currentIndex = index;
           });
         },
-        backgroundColor: const Color(0xFF0D1119),
+        backgroundColor: Theme.of(context).colorScheme.surface,
+        indicatorColor: Theme.of(context).colorScheme.primaryContainer,
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.home_outlined),
@@ -989,7 +1009,9 @@ class _DashboardPageState extends State<DashboardPage> {
 
   Future<void> _loadAgentStatus() async {
     try {
-      final data = await ApiService.getAgentStatus(1);
+      final data = await ApiService.getAgentStatus(
+        await ApiService.getCurrentUserId(),
+      );
 
       if (!mounted) return;
 
@@ -1022,7 +1044,9 @@ class _DashboardPageState extends State<DashboardPage> {
     });
 
     try {
-      final data = await ApiService.runAgent(1);
+      final data = await ApiService.runAgent(
+        await ApiService.getCurrentUserId(),
+      );
 
       if (!mounted) return;
 
@@ -1059,7 +1083,9 @@ class _DashboardPageState extends State<DashboardPage> {
     });
 
     try {
-      final data = await ApiService.stopAgent(1);
+      final data = await ApiService.stopAgent(
+        await ApiService.getCurrentUserId(),
+      );
 
       if (!mounted) return;
 
@@ -1125,9 +1151,15 @@ class _DashboardPageState extends State<DashboardPage> {
     }
   }
 
+  Future<void> _refreshDashboard() async {
+    await Future.wait([_loadDashboard(), _loadAgentStatus()]);
+  }
+
   Future<void> _loadDashboard() async {
     try {
-      final data = await ApiService.getDashboard(1);
+      final data = await ApiService.getDashboard(
+        await ApiService.getCurrentUserId(),
+      );
 
       if (!mounted) return;
 
@@ -1153,237 +1185,535 @@ class _DashboardPageState extends State<DashboardPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text(
-          'TrippieAutoAI',
-          style: TextStyle(fontWeight: FontWeight.bold),
-        ),
-        actions: [
-          IconButton(
-            onPressed: () {},
-            icon: const Icon(Icons.notifications_none_rounded),
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final muted = colors.onSurface.withValues(alpha: 0.62);
+    final hour = DateTime.now().hour;
+    final greeting = hour < 12
+        ? 'Good morning'
+        : hour < 17
+        ? 'Good afternoon'
+        : 'Good evening';
+
+    Widget statCard({
+      required IconData icon,
+      required String label,
+      required String value,
+      required Color accent,
+    }) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: theme.cardColor,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: colors.outlineVariant.withValues(alpha: 0.45),
           ),
-        ],
-      ),
-      body: SafeArea(
-        child: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : _error != null
-            ? Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.cloud_off_rounded, size: 48),
-                      const SizedBox(height: 16),
-                      Text(_error!, textAlign: TextAlign.center),
-                      const SizedBox(height: 16),
-                      ElevatedButton.icon(
-                        onPressed: () {
-                          setState(() {
-                            _loading = true;
-                            _error = null;
-                          });
-                          _loadDashboard();
-                        },
-                        icon: const Icon(Icons.refresh_rounded),
-                        label: const Text('Retry'),
-                      ),
-                    ],
-                  ),
-                ),
-              )
-            : ListView(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: accent.withValues(alpha: 0.13),
+                borderRadius: BorderRadius.circular(13),
+              ),
+              child: Icon(icon, color: accent, size: 21),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              value,
+              style: theme.textTheme.headlineSmall?.copyWith(
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.7,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              style: theme.textTheme.bodySmall?.copyWith(color: muted),
+            ),
+          ],
+        ),
+      );
+    }
+
+    Widget sectionTitle(String title, String subtitle) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'GOOD EVENING',
-                    style: TextStyle(
-                      fontSize: 12,
-                      letterSpacing: 1.8,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.deepPurpleAccent.withValues(alpha: 0.9),
+                    title,
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
-                  const SizedBox(height: 6),
-                  const Text(
-                    'Your job search,\nworking for you.',
-                    style: TextStyle(
-                      fontSize: 30,
-                      height: 1.12,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 22),
-                  GestureDetector(
-                    onTap: _agentLoading ? null : _openAgentPanel,
-                    child: Container(
-                      padding: const EdgeInsets.all(18),
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(22),
-                        gradient: const LinearGradient(
-                          colors: [Color(0xFF1A1429), Color(0xFF111722)],
-                        ),
-                        border: Border.all(
-                          color: _agentRunning
-                              ? Colors.greenAccent.withValues(alpha: 0.25)
-                              : const Color(0xFF352B52),
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          Container(
-                            width: 52,
-                            height: 52,
-                            decoration: BoxDecoration(
-                              color: Colors.deepPurple.withValues(alpha: 0.18),
-                              shape: BoxShape.circle,
-                            ),
-                            child: const Icon(
-                              Icons.smart_toy_rounded,
-                              color: Colors.deepPurpleAccent,
-                              size: 28,
-                            ),
-                          ),
-                          const SizedBox(width: 14),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text(
-                                  'AI Agent',
-                                  style: TextStyle(
-                                    fontSize: 17,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                const SizedBox(height: 5),
-                                Row(
-                                  children: [
-                                    Icon(
-                                      Icons.circle,
-                                      size: 8,
-                                      color: _agentRunning
-                                          ? Colors.greenAccent
-                                          : Colors.grey,
-                                    ),
-                                    const SizedBox(width: 6),
-                                    Text(
-                                      _agentLoading
-                                          ? 'CHECKING...'
-                                          : _agentRunning
-                                          ? 'RUNNING'
-                                          : 'STOPPED',
-                                      style: TextStyle(
-                                        color: _agentRunning
-                                            ? Colors.greenAccent
-                                            : Colors.grey,
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                          ),
-                          Icon(
-                            Icons.chevron_right_rounded,
-                            color: Colors.white.withValues(alpha: 0.4),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  const Text(
-                    'OVERVIEW',
-                    style: TextStyle(
-                      fontSize: 12,
-                      letterSpacing: 1.5,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _StatCard(
-                          icon: Icons.work_outline_rounded,
-                          label: 'Total Jobs',
-                          value: _loading ? '—' : '$_totalJobs',
-                        ),
-                      ),
-                      SizedBox(width: 10),
-                      Expanded(
-                        child: _StatCard(
-                          icon: Icons.auto_awesome_rounded,
-                          label: 'Matching',
-                          value: _loading ? '—' : '$_matchingJobs',
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _StatCard(
-                          icon: Icons.send_outlined,
-                          label: 'Applied',
-                          value: _loading ? '—' : '$_applications',
-                        ),
-                      ),
-                      SizedBox(width: 10),
-                      Expanded(
-                        child: _StatCard(
-                          icon: Icons.check_circle_outline_rounded,
-                          label: 'Successful',
-                          value: _loading ? '—' : '$_successfullyApplied',
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  _StatCard(
-                    icon: Icons.mail_outline_rounded,
-                    label: 'Emails Received',
-                    value: _loading ? '—' : '$_emailsReceived',
-                  ),
-                  const SizedBox(height: 28),
-                  const Text(
-                    'AI ACTIVITY',
-                    style: TextStyle(
-                      fontSize: 12,
-                      letterSpacing: 1.5,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  _ActivityItem(
-                    icon: Icons.search_rounded,
-                    title: 'Job discovery',
-                    subtitle: 'Waiting for agent',
-                  ),
-                  _ActivityItem(
-                    icon: Icons.psychology_outlined,
-                    title: 'AI matching',
-                    subtitle: 'No jobs analyzed yet',
-                  ),
-                  _ActivityItem(
-                    icon: Icons.description_outlined,
-                    title: 'Applications',
-                    subtitle: 'No applications yet',
-                  ),
-                  _ActivityItem(
-                    icon: Icons.mail_outline_rounded,
-                    title: 'Email monitoring',
-                    subtitle: 'Email account not connected',
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle,
+                    style: theme.textTheme.bodySmall?.copyWith(color: muted),
                   ),
                 ],
               ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    Widget activityRow({
+      required IconData icon,
+      required String title,
+      required String subtitle,
+      required Color accent,
+    }) {
+      return Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: theme.cardColor,
+          borderRadius: BorderRadius.circular(17),
+          border: Border.all(
+            color: colors.outlineVariant.withValues(alpha: 0.35),
+          ),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: accent.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(13),
+              ),
+              child: Icon(icon, color: accent, size: 21),
+            ),
+            const SizedBox(width: 13),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    subtitle,
+                    style: theme.textTheme.bodySmall?.copyWith(color: muted),
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right_rounded, color: muted),
+          ],
+        ),
+      );
+    }
+
+    final totalJobsValue = _loading ? '…' : '$_totalJobs';
+    final matchingJobsValue = _loading ? '…' : '$_matchingJobs';
+    final applicationsValue = _loading ? '…' : '$_applications';
+    final successfulValue = _loading ? '…' : '$_successfullyApplied';
+    final emailsValue = _loading ? '…' : '$_emailsReceived';
+
+    return Scaffold(
+      appBar: AppBar(
+        titleSpacing: 20,
+        title: Row(
+          children: [
+            Container(
+              width: 38,
+              height: 38,
+              decoration: BoxDecoration(
+                color: colors.primary.withValues(alpha: 0.13),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                Icons.auto_awesome_rounded,
+                color: colors.primary,
+                size: 22,
+              ),
+            ),
+            const SizedBox(width: 11),
+            const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'TrippieAutoAI',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.w800),
+                ),
+                Text(
+                  'PERSONAL COMMAND CENTER',
+                  style: TextStyle(
+                    fontSize: 9,
+                    letterSpacing: 1.1,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+        actions: [
+          IconButton(
+            tooltip: 'Refresh data',
+            onPressed: _refreshDashboard,
+            icon: const Icon(Icons.refresh_rounded),
+          ),
+          const SizedBox(width: 5),
+        ],
+      ),
+      body: RefreshIndicator(
+        onRefresh: _refreshDashboard,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          padding: const EdgeInsets.fromLTRB(18, 12, 18, 28),
+          children: [
+            Text(
+              greeting,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: colors.primary,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Dickson 👋',
+              style: theme.textTheme.headlineMedium?.copyWith(
+                fontWeight: FontWeight.w900,
+                letterSpacing: -1.1,
+              ),
+            ),
+            const SizedBox(height: 7),
+            Text(
+              'Your personal AI workspace, all in one place.',
+              style: theme.textTheme.bodyMedium?.copyWith(color: muted),
+            ),
+            const SizedBox(height: 22),
+
+            // Agent status and controls.
+            Container(
+              padding: const EdgeInsets.all(19),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [Color(0xFF25205A), Color(0xFF111827)],
+                ),
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(
+                  color: (_agentRunning ? Colors.greenAccent : Colors.white)
+                      .withValues(alpha: 0.18),
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: const Color(0xFF5145CD).withValues(alpha: 0.12),
+                    blurRadius: 24,
+                    offset: const Offset(0, 10),
+                  ),
+                ],
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 48,
+                        height: 48,
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.10),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: const Icon(
+                          Icons.smart_toy_rounded,
+                          color: Color(0xFFC4B5FD),
+                          size: 27,
+                        ),
+                      ),
+                      const SizedBox(width: 13),
+                      const Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Your AI Agent',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 17,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            SizedBox(height: 4),
+                            Text(
+                              'Job discovery · Matching · Email',
+                              style: TextStyle(
+                                color: Color(0xFFC4C5D4),
+                                fontSize: 11,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 7,
+                        ),
+                        decoration: BoxDecoration(
+                          color:
+                              (_agentRunning
+                                      ? Colors.greenAccent
+                                      : Colors.white)
+                                  .withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(30),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 7,
+                              height: 7,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: _agentLoading
+                                    ? Colors.amberAccent
+                                    : _agentRunning
+                                    ? Colors.greenAccent
+                                    : Colors.white54,
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              _agentLoading
+                                  ? 'CHECKING'
+                                  : _agentRunning
+                                  ? 'RUNNING'
+                                  : 'PAUSED',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 18),
+                  Text(
+                    _agentRunning
+                        ? 'Your automation is switched on.'
+                        : 'Your workspace is ready when you are.',
+                    style: const TextStyle(
+                      color: Color(0xFFE0E1EF),
+                      fontSize: 13,
+                    ),
+                  ),
+                  if (_agentError != null) ...[
+                    const SizedBox(height: 8),
+                    Text(
+                      _agentError!,
+                      style: const TextStyle(
+                        color: Color(0xFFFFB4AB),
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: FilledButton.icon(
+                          onPressed: _agentLoading
+                              ? null
+                              : (_agentRunning ? _stopAgent : _runAgent),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: const Color(0xFF8B7CFF),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 13),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          icon: Icon(
+                            _agentRunning
+                                ? Icons.pause_rounded
+                                : Icons.play_arrow_rounded,
+                          ),
+                          label: Text(
+                            _agentLoading
+                                ? 'Please wait'
+                                : _agentRunning
+                                ? 'Pause agent'
+                                : 'Start agent',
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      IconButton.filledTonal(
+                        tooltip: 'Agent settings',
+                        onPressed: _agentLoading ? null : _openAgentPanel,
+                        style: IconButton.styleFrom(
+                          backgroundColor: Colors.white.withValues(alpha: 0.12),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.all(14),
+                        ),
+                        icon: const Icon(Icons.tune_rounded),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 26),
+            sectionTitle('Your overview', 'Live totals from your workspace'),
+            if (_error != null)
+              Container(
+                margin: const EdgeInsets.only(bottom: 14),
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: colors.errorContainer,
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.cloud_off_rounded, color: colors.error),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Dashboard data could not be loaded. Pull down to retry.',
+                        style: TextStyle(color: colors.onErrorContainer),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: 'Retry',
+                      onPressed: _loadDashboard,
+                      icon: const Icon(Icons.refresh_rounded),
+                    ),
+                  ],
+                ),
+              ),
+            GridView.count(
+              crossAxisCount: 2,
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              crossAxisSpacing: 12,
+              mainAxisSpacing: 12,
+              childAspectRatio: 1.22,
+              children: [
+                statCard(
+                  icon: Icons.work_outline_rounded,
+                  label: 'Total jobs',
+                  value: totalJobsValue,
+                  accent: const Color(0xFF7C83FF),
+                ),
+                statCard(
+                  icon: Icons.auto_awesome_rounded,
+                  label: 'Matching jobs',
+                  value: matchingJobsValue,
+                  accent: const Color(0xFFB18CFF),
+                ),
+                statCard(
+                  icon: Icons.send_rounded,
+                  label: 'Applications tracked',
+                  value: applicationsValue,
+                  accent: const Color(0xFF4DA6FF),
+                ),
+                statCard(
+                  icon: Icons.check_circle_outline_rounded,
+                  label: 'Successfully applied',
+                  value: successfulValue,
+                  accent: const Color(0xFF36C99B),
+                ),
+                statCard(
+                  icon: Icons.mark_email_unread_outlined,
+                  label: 'Emails received',
+                  value: emailsValue,
+                  accent: const Color(0xFFFFB454),
+                ),
+                statCard(
+                  icon: Icons.shield_outlined,
+                  label: 'Approval required',
+                  value: _requireApproval ? 'On' : 'Off',
+                  accent: const Color(0xFF53C7D9),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 27),
+            sectionTitle(
+              'Automation activity',
+              'What your workspace is configured to do',
+            ),
+            activityRow(
+              icon: Icons.travel_explore_rounded,
+              title: 'Job discovery',
+              subtitle: _agentLoading
+                  ? 'Checking configuration…'
+                  : !_automaticJobDiscovery
+                  ? 'Automatic discovery is disabled'
+                  : _agentRunning
+                  ? 'Enabled · agent reports running'
+                  : 'Enabled · start the agent to run',
+              accent: const Color(0xFF7C83FF),
+            ),
+            activityRow(
+              icon: Icons.psychology_alt_rounded,
+              title: 'Job matching',
+              subtitle: _loading
+                  ? 'Loading matching totals…'
+                  : _matchingJobs > 0
+                  ? '$_matchingJobs matching jobs recorded'
+                  : 'No matching jobs recorded yet',
+              accent: const Color(0xFFB18CFF),
+            ),
+            activityRow(
+              icon: Icons.mark_email_read_outlined,
+              title: 'Email monitoring',
+              subtitle: _agentLoading
+                  ? 'Checking monitoring settings…'
+                  : !_emailMonitoring
+                  ? 'Email monitoring is disabled'
+                  : _emailsReceived > 0
+                  ? '$_emailsReceived emails recorded'
+                  : 'Enabled · no emails recorded yet',
+              accent: const Color(0xFFFFB454),
+            ),
+            activityRow(
+              icon: Icons.fact_check_outlined,
+              title: 'Application workflow',
+              subtitle: _automaticApplication
+                  ? (_requireApproval
+                        ? 'Automatic workflow enabled · approval required'
+                        : 'Automatic workflow enabled')
+                  : 'Review and prepare applications before submission',
+              accent: const Color(0xFF36C99B),
+            ),
+            const SizedBox(height: 8),
+            Center(
+              child: Text(
+                'TrippieAutoAI · Your personal career assistant',
+                textAlign: TextAlign.center,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: muted,
+                  fontSize: 11,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1401,6 +1731,46 @@ class _JobsPageState extends State<JobsPage> {
   String? _error;
   List<Map<String, dynamic>> _jobs = [];
   Map<int, String> _applicationStatuses = {};
+  String _jobSearch = '';
+  int _minimumMatchScore = 0;
+  String _jobSort = 'Best match';
+
+  List<Map<String, dynamic>> get _visibleJobs {
+    final query = _jobSearch.trim().toLowerCase();
+    final result = _jobs.where((job) {
+      final score = (job['match_score'] as num?)?.toInt() ?? 0;
+      if (score < _minimumMatchScore) return false;
+      if (query.isEmpty) return true;
+      final searchable = [
+        job['title'],
+        job['company'],
+        job['location'],
+        job['source'],
+        job['employment_type'],
+        job['description'],
+      ].whereType<Object>().join(' ').toLowerCase();
+      return searchable.contains(query);
+    }).toList();
+
+    result.sort((a, b) {
+      if (_jobSort == 'A–Z') {
+        return (a['title']?.toString() ?? '').toLowerCase().compareTo(
+          (b['title']?.toString() ?? '').toLowerCase(),
+        );
+      }
+      if (_jobSort == 'Newest') {
+        final ad = DateTime.tryParse(a['discovered_at']?.toString() ?? '');
+        final bd = DateTime.tryParse(b['discovered_at']?.toString() ?? '');
+        return (bd?.millisecondsSinceEpoch ?? 0).compareTo(
+          ad?.millisecondsSinceEpoch ?? 0,
+        );
+      }
+      final ascore = (a['match_score'] as num?)?.toInt() ?? 0;
+      final bscore = (b['match_score'] as num?)?.toInt() ?? 0;
+      return bscore.compareTo(ascore);
+    });
+    return result;
+  }
 
   @override
   void initState() {
@@ -1417,7 +1787,7 @@ class _JobsPageState extends State<JobsPage> {
     try {
       final results = await Future.wait([
         ApiService.getJobs(),
-        ApiService.getApplications(1),
+        ApiService.getApplications(await ApiService.getCurrentUserId()),
       ]);
 
       if (!mounted) return;
@@ -1545,7 +1915,100 @@ class _JobsPageState extends State<JobsPage> {
     );
   }
 
+  Widget _buildJobsToolbar(int resultCount) {
+    final colors = Theme.of(context).colorScheme;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Discover opportunities',
+            style: Theme.of(context).textTheme.headlineSmall
+                ?.copyWith(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            '$resultCount of ${_jobs.length} jobs · sorted by $_jobSort',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 14),
+          TextField(
+            onChanged: (value) => setState(() => _jobSearch = value),
+            decoration: InputDecoration(
+              hintText: 'Search role, company, location…',
+              prefixIcon: const Icon(Icons.search_rounded),
+              suffixIcon: _jobSearch.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: 'Clear search',
+                      onPressed: () => setState(() => _jobSearch = ''),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+              filled: true,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: BorderSide.none,
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                for (final option in [
+                  (label: 'All matches', score: 0),
+                  (label: '50%+', score: 50),
+                  (label: '70%+', score: 70),
+                ])
+                  Padding(
+                    padding: const EdgeInsets.only(right: 8),
+                    child: ChoiceChip(
+                      label: Text(option.label),
+                      selected: _minimumMatchScore == option.score,
+                      onSelected: (_) =>
+                          setState(() => _minimumMatchScore = option.score),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          DropdownButtonFormField<String>(
+            initialValue: _jobSort,
+            decoration: InputDecoration(
+              labelText: 'Sort jobs',
+              prefixIcon: const Icon(Icons.sort_rounded),
+              filled: true,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+            items: const [
+              DropdownMenuItem(value: 'Best match', child: Text('Best match')),
+              DropdownMenuItem(value: 'Newest', child: Text('Newest first')),
+              DropdownMenuItem(value: 'A–Z', child: Text('Title A–Z')),
+            ],
+            onChanged: (value) {
+              if (value != null) setState(() => _jobSort = value);
+            },
+          ),
+          if (_loading) ...[
+            const SizedBox(height: 10),
+            const LinearProgressIndicator(),
+          ],
+          if (_error != null) ...[
+            const SizedBox(height: 10),
+            Text(_error!, style: TextStyle(color: colors.error)),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _buildBody() {
+    final visibleJobs = _visibleJobs;
     if (_loading && _jobs.isEmpty) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -1612,9 +2075,36 @@ class _JobsPageState extends State<JobsPage> {
       child: ListView.builder(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
-        itemCount: _jobs.length,
+        itemCount: visibleJobs.length + 1,
         itemBuilder: (context, index) {
-          final job = _jobs[index];
+          if (index == 0) {
+            return _buildJobsToolbar(visibleJobs.length);
+          }
+          if (visibleJobs.isEmpty) {
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 44),
+              child: Column(
+                children: [
+                  const Icon(Icons.search_off_rounded, size: 48),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'No jobs match these filters.',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 8),
+                  TextButton(
+                    onPressed: () => setState(() {
+                      _jobSearch = '';
+                      _minimumMatchScore = 0;
+                      _jobSort = 'Best match';
+                    }),
+                    child: const Text('Clear filters'),
+                  ),
+                ],
+              ),
+            );
+          }
+          final job = visibleJobs[index - 1];
 
           final title = job['title']?.toString() ?? 'Untitled Job';
           final company = job['company']?.toString() ?? 'Unknown Company';
@@ -1821,7 +2311,9 @@ class _JobDetailsPageState extends State<JobDetailsPage> {
     }
 
     try {
-      final data = await ApiService.getApplications(1);
+      final data = await ApiService.getApplications(
+        await ApiService.getCurrentUserId(),
+      );
 
       if (!mounted) return;
 
@@ -1905,13 +2397,23 @@ class _JobDetailsPageState extends State<JobDetailsPage> {
     final score = (job['match_score'] as num?)?.toInt() ?? 0;
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Job Details')),
+      appBar: AppBar(
+        title: const Text(
+          'Job Details',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+      ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
         children: [
           Text(
             title,
-            style: const TextStyle(fontSize: 25, fontWeight: FontWeight.bold),
+            style: const TextStyle(
+              fontSize: 27,
+              fontWeight: FontWeight.bold,
+              letterSpacing: -0.5,
+              height: 1.2,
+            ),
           ),
           const SizedBox(height: 10),
           Text(
@@ -2039,8 +2541,7 @@ class _PrepareApplicationButton extends StatefulWidget {
       _PrepareApplicationButtonState();
 }
 
-class _PrepareApplicationButtonState
-    extends State<_PrepareApplicationButton> {
+class _PrepareApplicationButtonState extends State<_PrepareApplicationButton> {
   bool _loading = false;
 
   Future<void> _prepare() async {
@@ -2054,7 +2555,7 @@ class _PrepareApplicationButtonState
 
     try {
       final result = await ApiService.prepareApplication(
-        1,
+        await ApiService.getCurrentUserId(),
         widget.jobId,
       );
 
@@ -2074,23 +2575,16 @@ class _PrepareApplicationButtonState
 
       await Navigator.of(context).push(
         MaterialPageRoute(
-          builder: (_) => ApplicationReviewPage(
-            application: result,
-          ),
+          builder: (_) => ApplicationReviewPage(application: result),
         ),
       );
     } catch (error) {
       if (!mounted) return;
 
-      final message = error
-          .toString()
-          .replaceFirst('Exception: ', '');
+      final message = error.toString().replaceFirst('Exception: ', '');
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(message),
-          behavior: SnackBarBehavior.floating,
-        ),
+        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
       );
     } finally {
       if (mounted) {
@@ -2109,18 +2603,12 @@ class _PrepareApplicationButtonState
           ? const SizedBox(
               width: 20,
               height: 20,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-              ),
+              child: CircularProgressIndicator(strokeWidth: 2),
             )
           : const Icon(Icons.auto_awesome_rounded),
       label: Text(
-        _loading
-            ? 'Preparing...'
-            : 'Prepare & Review Application',
-        style: const TextStyle(
-          fontWeight: FontWeight.bold,
-        ),
+        _loading ? 'Preparing...' : 'Prepare & Review Application',
+        style: const TextStyle(fontWeight: FontWeight.bold),
       ),
     );
   }
@@ -2129,15 +2617,9 @@ class _PrepareApplicationButtonState
 class ApplicationReviewPage extends StatelessWidget {
   final Map<String, dynamic> application;
 
-  const ApplicationReviewPage({
-    super.key,
-    required this.application,
-  });
+  const ApplicationReviewPage({super.key, required this.application});
 
-  Future<void> _openApplicationUrl(
-    BuildContext context,
-    String url,
-  ) async {
+  Future<void> _openApplicationUrl(BuildContext context, String url) async {
     final uri = Uri.tryParse(url);
 
     if (uri == null ||
@@ -2153,10 +2635,7 @@ class ApplicationReviewPage extends StatelessWidget {
     }
 
     try {
-      final opened = await launchUrl(
-        uri,
-        mode: LaunchMode.externalApplication,
-      );
+      final opened = await launchUrl(uri, mode: LaunchMode.externalApplication);
 
       if (!opened && context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -2181,27 +2660,21 @@ class ApplicationReviewPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final job = application['job'] is Map
-        ? Map<String, dynamic>.from(
-            application['job'] as Map,
-          )
+        ? Map<String, dynamic>.from(application['job'] as Map)
         : <String, dynamic>{};
 
-    final title =
-        job['title']?.toString() ?? 'Untitled Job';
+    final title = job['title']?.toString() ?? 'Untitled Job';
 
-    final company =
-        job['company']?.toString() ?? 'Unknown Company';
+    final company = job['company']?.toString() ?? 'Unknown Company';
 
     final applicationUrl =
         job['application_url']?.toString() ??
         application['application_url']?.toString() ??
         '';
 
-    final coverLetter =
-        application['cover_letter']?.toString() ?? '';
+    final coverLetter = application['cover_letter']?.toString() ?? '';
 
-    final matchScore =
-        (application['match_score'] as num?)?.toInt() ?? 0;
+    final matchScore = (application['match_score'] as num?)?.toInt() ?? 0;
 
     final matchedSkills =
         (application['matched_skills'] as List<dynamic>? ?? [])
@@ -2215,24 +2688,20 @@ class ApplicationReviewPage extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Review Application'),
+        title: const Text(
+          'Review Application',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
       ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(
-          20,
-          12,
-          20,
-          32,
-        ),
+        padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
         children: [
           Container(
             padding: const EdgeInsets.all(18),
             decoration: BoxDecoration(
               color: const Color(0xFF11151F),
               borderRadius: BorderRadius.circular(18),
-              border: Border.all(
-                color: const Color(0xFF222938),
-              ),
+              border: Border.all(color: const Color(0xFF222938)),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -2247,10 +2716,7 @@ class ApplicationReviewPage extends StatelessWidget {
                 const SizedBox(height: 6),
                 Text(
                   company,
-                  style: const TextStyle(
-                    color: Colors.white60,
-                    fontSize: 15,
-                  ),
+                  style: const TextStyle(color: Colors.white60, fontSize: 15),
                 ),
                 const SizedBox(height: 16),
                 Row(
@@ -2278,10 +2744,7 @@ class ApplicationReviewPage extends StatelessWidget {
 
           const Text(
             'Application readiness',
-            style: TextStyle(
-              fontSize: 19,
-              fontWeight: FontWeight.bold,
-            ),
+            style: TextStyle(fontSize: 19, fontWeight: FontWeight.bold),
           ),
 
           const SizedBox(height: 10),
@@ -2309,10 +2772,7 @@ class ApplicationReviewPage extends StatelessWidget {
           if (matchedSkills.isNotEmpty) ...[
             const Text(
               'Matched skills',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 10),
             Wrap(
@@ -2321,10 +2781,7 @@ class ApplicationReviewPage extends StatelessWidget {
               children: matchedSkills
                   .map(
                     (skill) => Chip(
-                      avatar: const Icon(
-                        Icons.check_rounded,
-                        size: 16,
-                      ),
+                      avatar: const Icon(Icons.check_rounded, size: 16),
                       label: Text(skill),
                     ),
                   )
@@ -2336,28 +2793,19 @@ class ApplicationReviewPage extends StatelessWidget {
           if (missingSkills.isNotEmpty) ...[
             const Text(
               'Skills not identified in your profile',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
             Text(
               missingSkills.join(', '),
-              style: const TextStyle(
-                color: Colors.white60,
-                height: 1.5,
-              ),
+              style: const TextStyle(color: Colors.white60, height: 1.5),
             ),
             const SizedBox(height: 24),
           ],
 
           const Text(
             'Generated cover letter',
-            style: TextStyle(
-              fontSize: 19,
-              fontWeight: FontWeight.bold,
-            ),
+            style: TextStyle(fontSize: 19, fontWeight: FontWeight.bold),
           ),
 
           const SizedBox(height: 10),
@@ -2367,18 +2815,13 @@ class ApplicationReviewPage extends StatelessWidget {
             decoration: BoxDecoration(
               color: const Color(0xFF0D1119),
               borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: const Color(0xFF222938),
-              ),
+              border: Border.all(color: const Color(0xFF222938)),
             ),
             child: SelectableText(
               coverLetter.isEmpty
                   ? 'No cover letter was generated.'
                   : coverLetter,
-              style: const TextStyle(
-                color: Colors.white70,
-                height: 1.55,
-              ),
+              style: const TextStyle(color: Colors.white70, height: 1.55),
             ),
           ),
 
@@ -2388,18 +2831,11 @@ class ApplicationReviewPage extends StatelessWidget {
             SizedBox(
               height: 54,
               child: FilledButton.icon(
-                onPressed: () => _openApplicationUrl(
-                  context,
-                  applicationUrl,
-                ),
-                icon: const Icon(
-                  Icons.open_in_new_rounded,
-                ),
+                onPressed: () => _openApplicationUrl(context, applicationUrl),
+                icon: const Icon(Icons.open_in_new_rounded),
                 label: const Text(
                   'Open Official Application Page',
-                  style: TextStyle(
-                    fontWeight: FontWeight.bold,
-                  ),
+                  style: TextStyle(fontWeight: FontWeight.bold),
                 ),
               ),
             ),
@@ -2409,14 +2845,10 @@ class ApplicationReviewPage extends StatelessWidget {
           Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: Colors.orangeAccent.withValues(
-                alpha: 0.08,
-              ),
+              color: Colors.orangeAccent.withValues(alpha: 0.08),
               borderRadius: BorderRadius.circular(14),
               border: Border.all(
-                color: Colors.orangeAccent.withValues(
-                  alpha: 0.25,
-                ),
+                color: Colors.orangeAccent.withValues(alpha: 0.25),
               ),
             ),
             child: const Row(
@@ -2467,11 +2899,7 @@ class _ApplicationStep extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(
-            icon,
-            color: Colors.greenAccent,
-            size: 22,
-          ),
+          Icon(icon, color: Colors.greenAccent, size: 22),
           const SizedBox(width: 12),
           Expanded(
             child: Column(
@@ -2479,9 +2907,7 @@ class _ApplicationStep extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-                  ),
+                  style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
                 const SizedBox(height: 3),
                 Text(
@@ -2543,6 +2969,29 @@ class _ApplicationsPageState extends State<ApplicationsPage> {
   String? _error;
   List<Map<String, dynamic>> _applications = [];
   int? _updatingApplicationId;
+  String _applicationSearch = '';
+  String _applicationStatusFilter = 'all';
+
+  List<Map<String, dynamic>> get _visibleApplications {
+    final query = _applicationSearch.trim().toLowerCase();
+    return _applications.where((application) {
+      final status = application['status']?.toString() ?? 'prepared';
+      if (_applicationStatusFilter != 'all' &&
+          status != _applicationStatusFilter) {
+        return false;
+      }
+      final job = application['job'] is Map
+          ? Map<String, dynamic>.from(application['job'])
+          : <String, dynamic>{};
+      if (query.isEmpty) return true;
+      return [
+        job['title'],
+        job['company'],
+        job['location'],
+        status,
+      ].whereType<Object>().join(' ').toLowerCase().contains(query);
+    }).toList();
+  }
 
   static const List<String> _statuses = [
     'prepared',
@@ -2572,7 +3021,9 @@ class _ApplicationsPageState extends State<ApplicationsPage> {
     });
 
     try {
-      final data = await ApiService.getApplications(1);
+      final data = await ApiService.getApplications(
+        await ApiService.getCurrentUserId(),
+      );
       final rawApplications = data['applications'];
 
       final applications = rawApplications is List
@@ -2745,8 +3196,151 @@ class _ApplicationsPageState extends State<ApplicationsPage> {
         '${local.year}';
   }
 
+  Widget _buildApplicationsToolbar(int resultCount) {
+    final colors = Theme.of(context).colorScheme;
+    final prepared = _applications
+        .where(
+          (item) => (item['status']?.toString() ?? 'prepared') == 'prepared',
+        )
+        .length;
+    final submitted = _applications
+        .where(
+          (item) => const [
+            'submitted',
+            'under_review',
+            'interview',
+            'assessment',
+            'offer',
+            'accepted',
+          ].contains(item['status']?.toString()),
+        )
+        .length;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Application tracker',
+            style: Theme.of(context).textTheme.headlineSmall
+                ?.copyWith(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 5),
+          Text(
+            '$resultCount of ${_applications.length} tracked applications',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: _applicationSummaryTile(
+                  'Prepared',
+                  prepared,
+                  Icons.edit_document,
+                  colors.primaryContainer,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _applicationSummaryTile(
+                  'Submitted / active',
+                  submitted,
+                  Icons.outbox_rounded,
+                  colors.secondaryContainer,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 14),
+          TextField(
+            onChanged: (value) => setState(() => _applicationSearch = value),
+            decoration: InputDecoration(
+              hintText: 'Search role, company, status…',
+              prefixIcon: const Icon(Icons.search_rounded),
+              suffixIcon: _applicationSearch.isEmpty
+                  ? null
+                  : IconButton(
+                      tooltip: 'Clear search',
+                      onPressed: () => setState(() => _applicationSearch = ''),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+              filled: true,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(16),
+                borderSide: BorderSide.none,
+              ),
+            ),
+          ),
+          const SizedBox(height: 10),
+          DropdownButtonFormField<String>(
+            initialValue: _applicationStatusFilter,
+            decoration: InputDecoration(
+              labelText: 'Filter by status',
+              prefixIcon: const Icon(Icons.filter_alt_outlined),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(14),
+              ),
+            ),
+            items: [
+              const DropdownMenuItem(value: 'all', child: Text('All statuses')),
+              for (final status in _statuses)
+                DropdownMenuItem(
+                  value: status,
+                  child: Text(_formatStatus(status)),
+                ),
+            ],
+            onChanged: (value) {
+              if (value != null) {
+                setState(() => _applicationStatusFilter = value);
+              }
+            },
+          ),
+          if (_loading) ...[
+            const SizedBox(height: 10),
+            const LinearProgressIndicator(),
+          ],
+          if (_error != null) ...[
+            const SizedBox(height: 8),
+            Text(_error!, style: TextStyle(color: colors.error)),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _applicationSummaryTile(
+    String label,
+    int count,
+    IconData icon,
+    Color background,
+  ) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: background,
+        borderRadius: BorderRadius.circular(16),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 20),
+          const SizedBox(height: 10),
+          Text(
+            '$count',
+            style: const TextStyle(fontSize: 23, fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 3),
+          Text(label, style: Theme.of(context).textTheme.bodySmall),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final visibleApplications = _visibleApplications;
     if (_loading && _applications.isEmpty) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -2796,10 +3390,33 @@ class _ApplicationsPageState extends State<ApplicationsPage> {
               ],
             )
           : ListView.builder(
+              physics: const AlwaysScrollableScrollPhysics(),
               padding: const EdgeInsets.fromLTRB(16, 20, 16, 100),
-              itemCount: _applications.length,
+              itemCount: visibleApplications.length + 1,
               itemBuilder: (context, index) {
-                final application = _applications[index];
+                if (index == 0) {
+                  return _buildApplicationsToolbar(visibleApplications.length);
+                }
+                if (visibleApplications.isEmpty) {
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 36),
+                    child: Column(
+                      children: [
+                        const Icon(Icons.filter_list_off_rounded, size: 44),
+                        const SizedBox(height: 10),
+                        const Text('No applications match these filters.'),
+                        TextButton(
+                          onPressed: () => setState(() {
+                            _applicationSearch = '';
+                            _applicationStatusFilter = 'all';
+                          }),
+                          child: const Text('Clear filters'),
+                        ),
+                      ],
+                    ),
+                  );
+                }
+                final application = visibleApplications[index - 1];
                 final job = application['job'] is Map
                     ? Map<String, dynamic>.from(application['job'])
                     : <String, dynamic>{};
@@ -2976,7 +3593,9 @@ class _EmailPageState extends State<EmailPage> {
     });
 
     try {
-      final data = await ApiService.getEmails(1);
+      final data = await ApiService.getEmails(
+        await ApiService.getCurrentUserId(),
+      );
       final rawEmails = data['emails'];
 
       final emails = rawEmails is List
@@ -3009,7 +3628,9 @@ class _EmailPageState extends State<EmailPage> {
     });
 
     try {
-      final data = await ApiService.getPendingReplies(1);
+      final data = await ApiService.getPendingReplies(
+        await ApiService.getCurrentUserId(),
+      );
       final rawReplies = data['replies'];
 
       final replies = rawReplies is List
@@ -3042,7 +3663,7 @@ class _EmailPageState extends State<EmailPage> {
     });
 
     try {
-      await ApiService.syncGmail(1);
+      await ApiService.syncGmail(await ApiService.getCurrentUserId());
       await _loadEmails();
     } catch (error) {
       if (!mounted) return;
@@ -3390,7 +4011,10 @@ class _EmailPageState extends State<EmailPage> {
     }
 
     try {
-      final result = await ApiService.generateAiReply(1, emailId);
+      final result = await ApiService.generateAiReply(
+        await ApiService.getCurrentUserId(),
+        emailId,
+      );
 
       await _loadPendingReplies();
 
@@ -3408,7 +4032,11 @@ class _EmailPageState extends State<EmailPage> {
 
   Future<bool> _updateReplyDraft(int replyId, String body) async {
     try {
-      await ApiService.updateReplyDraft(1, replyId, body);
+      await ApiService.updateReplyDraft(
+        await ApiService.getCurrentUserId(),
+        replyId,
+        body,
+      );
 
       await _loadPendingReplies();
 
@@ -3426,7 +4054,10 @@ class _EmailPageState extends State<EmailPage> {
 
   Future<bool> _rejectReply(int replyId) async {
     try {
-      await ApiService.rejectReply(1, replyId);
+      await ApiService.rejectReply(
+        await ApiService.getCurrentUserId(),
+        replyId,
+      );
 
       await _loadPendingReplies();
 
@@ -3449,7 +4080,10 @@ class _EmailPageState extends State<EmailPage> {
 
   Future<bool> _approveAndSendReply(int replyId) async {
     try {
-      await ApiService.approveAndSendReply(1, replyId);
+      await ApiService.approveAndSendReply(
+        await ApiService.getCurrentUserId(),
+        replyId,
+      );
 
       await _loadPendingReplies();
 
@@ -4507,6 +5141,8 @@ class SettingsPage extends StatefulWidget {
 }
 
 class _SettingsPageState extends State<SettingsPage> {
+  final AuthService _authService = AuthService();
+
   bool _biometricsEnabled = false;
   bool _passwordEnabled = false;
   String _autoLock = 'Immediately';
@@ -4527,27 +5163,212 @@ class _SettingsPageState extends State<SettingsPage> {
   @override
   void initState() {
     super.initState();
+    _loadSecurityPreferences();
     _loadSettings();
+  }
+
+  Future<void> _loadSecurityPreferences() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (!mounted) return;
+      setState(() {
+        _biometricsEnabled =
+            prefs.getBool('security_biometrics_enabled') ?? false;
+        _passwordEnabled = prefs.getBool('security_password_enabled') ?? false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Unable to load security preferences.')),
+      );
+    }
+  }
+
+  Future<void> _setBiometricsEnabled(bool enabled) async {
+    if (enabled) {
+      final canUse = await _authService.canUseBiometrics();
+      final enrolled = await _authService.hasEnrolledBiometrics();
+      if (!mounted) return;
+      if (!canUse || !enrolled) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Biometrics are unavailable. Enable a fingerprint or supported biometric in device settings first.',
+            ),
+          ),
+        );
+        return;
+      }
+    }
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('security_biometrics_enabled', enabled);
+      if (!mounted) return;
+      setState(() => _biometricsEnabled = enabled);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            enabled
+                ? 'Biometric unlock enabled.'
+                : 'Biometric unlock disabled.',
+          ),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not save biometric preference.')),
+      );
+    }
+  }
+
+  Future<void> _setPasswordEnabled(bool enabled) async {
+    final prefs = await SharedPreferences.getInstance();
+
+    if (!enabled) {
+      await prefs.setBool('security_password_enabled', false);
+      if (!mounted) return;
+      setState(() => _passwordEnabled = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Password unlock disabled.')),
+      );
+      return;
+    }
+
+    if (!mounted) return;
+
+    final currentPin = TextEditingController();
+    final newPassword = TextEditingController();
+    final confirmPassword = TextEditingController();
+    String? dialogError;
+
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, refreshDialog) => AlertDialog(
+          title: const Text('Set up password unlock'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Confirm your current PIN, then create a password of at least 8 characters.',
+                ),
+                const SizedBox(height: 14),
+                TextField(
+                  controller: currentPin,
+                  obscureText: true,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'Current PIN',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: newPassword,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    labelText: 'New password (8+ characters)',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: confirmPassword,
+                  obscureText: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Confirm password',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                if (dialogError != null) ...[
+                  const SizedBox(height: 10),
+                  Text(
+                    dialogError!,
+                    style: const TextStyle(color: Colors.redAccent),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () {
+                if (currentPin.text.trim().isEmpty) {
+                  refreshDialog(() => dialogError = 'Enter your current PIN.');
+                } else if (newPassword.text.length < 8) {
+                  refreshDialog(
+                    () =>
+                        dialogError = 'Password must be at least 8 characters.',
+                  );
+                } else if (newPassword.text != confirmPassword.text) {
+                  refreshDialog(() => dialogError = 'Passwords do not match.');
+                } else {
+                  Navigator.pop(dialogContext, true);
+                }
+              },
+              child: const Text('Enable'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (accepted == true) {
+      try {
+        final validPin = await _authService.verifyPin(currentPin.text.trim());
+        if (!validPin) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Current PIN is incorrect.')),
+            );
+          }
+        } else {
+          await _authService.savePassword(newPassword.text);
+          await prefs.setBool('security_password_enabled', true);
+          if (!mounted) return;
+          setState(() => _passwordEnabled = true);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Password unlock enabled.')),
+          );
+        }
+      } catch (_) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Could not configure password unlock.'),
+            ),
+          );
+        }
+      }
+    }
+
+    currentPin.dispose();
+    newPassword.dispose();
+    confirmPassword.dispose();
   }
 
   Future<void> _loadSettings() async {
     try {
-      final data = await ApiService.getSettings(1);
+      final data = await ApiService.getSettings(
+        await ApiService.getCurrentUserId(),
+      );
 
       if (!mounted) return;
 
       setState(() {
         _agentEnabled = data['agent_enabled'] == true;
-        _automaticJobDiscovery =
-            data['automatic_job_discovery'] == true;
-        _automaticApplication =
-            data['automatic_application'] == true;
-        _emailMonitoring =
-            data['email_monitoring'] == true;
-        _autoReply =
-            data['auto_reply'] == true;
-        _requireApproval =
-            data['require_approval'] == true;
+        _automaticJobDiscovery = data['automatic_job_discovery'] == true;
+        _automaticApplication = data['automatic_application'] == true;
+        _emailMonitoring = data['email_monitoring'] == true;
+        _autoReply = data['auto_reply'] == true;
+        _requireApproval = data['require_approval'] == true;
         _minimumMatchScore =
             (data['minimum_match_score'] as num?)?.toInt() ?? 70;
         _dailyApplicationLimit =
@@ -4565,26 +5386,22 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  Future<void> _updateSetting(
-    Map<String, dynamic> updates,
-  ) async {
+  Future<void> _updateSetting(Map<String, dynamic> updates) async {
     try {
-      final data = await ApiService.updateSettings(1, updates);
+      final data = await ApiService.updateSettings(
+        await ApiService.getCurrentUserId(),
+        updates,
+      );
 
       if (!mounted) return;
 
       setState(() {
         _agentEnabled = data['agent_enabled'] == true;
-        _automaticJobDiscovery =
-            data['automatic_job_discovery'] == true;
-        _automaticApplication =
-            data['automatic_application'] == true;
-        _emailMonitoring =
-            data['email_monitoring'] == true;
-        _autoReply =
-            data['auto_reply'] == true;
-        _requireApproval =
-            data['require_approval'] == true;
+        _automaticJobDiscovery = data['automatic_job_discovery'] == true;
+        _automaticApplication = data['automatic_application'] == true;
+        _emailMonitoring = data['email_monitoring'] == true;
+        _autoReply = data['auto_reply'] == true;
+        _requireApproval = data['require_approval'] == true;
         _minimumMatchScore =
             (data['minimum_match_score'] as num?)?.toInt() ?? 70;
         _dailyApplicationLimit =
@@ -4618,8 +5435,172 @@ class _SettingsPageState extends State<SettingsPage> {
     );
   }
 
-  void _changePin() {
-    _showComingSoon('Change PIN');
+  Future<void> _changePin() async {
+    final currentPin = TextEditingController();
+    final newPin = TextEditingController();
+    final confirmPin = TextEditingController();
+    final auth = AuthService();
+
+    bool saving = false;
+    String? error;
+
+    final changed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('Change security PIN'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('Verify your current PIN before setting a new one.'),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: currentPin,
+                  obscureText: true,
+                  keyboardType: TextInputType.number,
+                  maxLength: 8,
+                  decoration: const InputDecoration(
+                    labelText: 'Current PIN',
+                    prefixIcon: Icon(Icons.lock_outline),
+                    counterText: '',
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: newPin,
+                  obscureText: true,
+                  keyboardType: TextInputType.number,
+                  maxLength: 8,
+                  decoration: const InputDecoration(
+                    labelText: 'New PIN (4–8 digits)',
+                    prefixIcon: Icon(Icons.pin_outlined),
+                    counterText: '',
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: confirmPin,
+                  obscureText: true,
+                  keyboardType: TextInputType.number,
+                  maxLength: 8,
+                  decoration: const InputDecoration(
+                    labelText: 'Confirm new PIN',
+                    prefixIcon: Icon(Icons.verified_user_outlined),
+                    counterText: '',
+                  ),
+                  onSubmitted: (_) {},
+                ),
+                if (error != null) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    error!,
+                    style: TextStyle(
+                      color: Theme.of(dialogContext).colorScheme.error,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: saving
+                  ? null
+                  : () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton.icon(
+              onPressed: saving
+                  ? null
+                  : () async {
+                      FocusScope.of(dialogContext).unfocus();
+
+                      final oldValue = currentPin.text.trim();
+                      final newValue = newPin.text.trim();
+                      final confirmation = confirmPin.text.trim();
+
+                      setDialogState(() {
+                        saving = true;
+                        error = null;
+                      });
+
+                      try {
+                        if (oldValue.isEmpty) {
+                          throw const FormatException(
+                            'Enter your current PIN.',
+                          );
+                        }
+
+                        if (!RegExp(r'^\d{4,8}$').hasMatch(newValue)) {
+                          throw const FormatException(
+                            'Your new PIN must contain 4–8 digits.',
+                          );
+                        }
+
+                        if (newValue != confirmation) {
+                          throw const FormatException(
+                            'The new PINs do not match.',
+                          );
+                        }
+
+                        if (oldValue == newValue) {
+                          throw const FormatException(
+                            'Choose a PIN different from your current one.',
+                          );
+                        }
+
+                        final valid = await auth.verifyPin(oldValue);
+                        if (!valid) {
+                          throw const FormatException(
+                            'Your current PIN is incorrect.',
+                          );
+                        }
+
+                        await auth.savePin(newValue);
+
+                        if (dialogContext.mounted) {
+                          Navigator.of(dialogContext).pop(true);
+                        }
+                      } on FormatException catch (e) {
+                        setDialogState(() {
+                          error = e.message;
+                          saving = false;
+                        });
+                      } catch (_) {
+                        setDialogState(() {
+                          error = 'Unable to update your PIN. Try again.';
+                          saving = false;
+                        });
+                      }
+                    },
+              icon: saving
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.check),
+              label: Text(saving ? 'Saving…' : 'Update PIN'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    currentPin.dispose();
+    newPin.dispose();
+    confirmPin.dispose();
+
+    if (changed == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Security PIN updated successfully.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
   }
 
   void _lockNow() {
@@ -4670,11 +5651,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     'Use fingerprint or supported biometrics to unlock',
                   ),
                   value: _biometricsEnabled,
-                  onChanged: (value) {
-                    setState(() {
-                      _biometricsEnabled = value;
-                    });
-                  },
+                  onChanged: _setBiometricsEnabled,
                 ),
                 const Divider(height: 1),
                 ListTile(
@@ -4700,16 +5677,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     'Allow password authentication for the app',
                   ),
                   value: _passwordEnabled,
-                  onChanged: (value) {
-                    setState(() {
-                      _passwordEnabled = value;
-                    });
-                    _showComingSoon(
-                      value
-                          ? 'Password authentication enabled'
-                          : 'Password authentication disabled',
-                    );
-                  },
+                  onChanged: _setPasswordEnabled,
                 ),
                 const Divider(height: 1),
                 ListTile(
@@ -4816,9 +5784,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           setState(() {
                             _agentEnabled = value;
                           });
-                          _updateSetting({
-                            'agent_enabled': value,
-                          });
+                          _updateSetting({'agent_enabled': value});
                         },
                 ),
 
@@ -4831,9 +5797,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     'Automatic Job Discovery',
                     style: TextStyle(fontWeight: FontWeight.w600),
                   ),
-                  subtitle: const Text(
-                    'Discover new jobs automatically',
-                  ),
+                  subtitle: const Text('Discover new jobs automatically'),
                   value: _automaticJobDiscovery,
                   onChanged: _settingsLoading
                       ? null
@@ -4841,9 +5805,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           setState(() {
                             _automaticJobDiscovery = value;
                           });
-                          _updateSetting({
-                            'automatic_job_discovery': value,
-                          });
+                          _updateSetting({'automatic_job_discovery': value});
                         },
                 ),
 
@@ -4866,9 +5828,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           setState(() {
                             _automaticApplication = value;
                           });
-                          _updateSetting({
-                            'automatic_application': value,
-                          });
+                          _updateSetting({'automatic_application': value});
                         },
                 ),
 
@@ -4886,13 +5846,9 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                   trailing: Text(
                     '$_minimumMatchScore%',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
-                  onTap: _settingsLoading
-                      ? null
-                      : _showMatchScoreOptions,
+                  onTap: _settingsLoading ? null : _showMatchScoreOptions,
                 ),
 
                 const Divider(height: 1),
@@ -4909,13 +5865,9 @@ class _SettingsPageState extends State<SettingsPage> {
                   ),
                   trailing: Text(
                     '$_dailyApplicationLimit',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                    ),
+                    style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
-                  onTap: _settingsLoading
-                      ? null
-                      : _showDailyLimitOptions,
+                  onTap: _settingsLoading ? null : _showDailyLimitOptions,
                 ),
               ],
             ),
@@ -4940,9 +5892,7 @@ class _SettingsPageState extends State<SettingsPage> {
                     'Email Monitoring',
                     style: TextStyle(fontWeight: FontWeight.w600),
                   ),
-                  subtitle: const Text(
-                    'Monitor Gmail for incoming messages',
-                  ),
+                  subtitle: const Text('Monitor Gmail for incoming messages'),
                   value: _emailMonitoring,
                   onChanged: _settingsLoading
                       ? null
@@ -4950,9 +5900,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           setState(() {
                             _emailMonitoring = value;
                           });
-                          _updateSetting({
-                            'email_monitoring': value,
-                          });
+                          _updateSetting({'email_monitoring': value});
                         },
                 ),
 
@@ -4975,9 +5923,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           setState(() {
                             _autoReply = value;
                           });
-                          _updateSetting({
-                            'auto_reply': value,
-                          });
+                          _updateSetting({'auto_reply': value});
                         },
                 ),
 
@@ -5000,9 +5946,7 @@ class _SettingsPageState extends State<SettingsPage> {
                           setState(() {
                             _requireApproval = value;
                           });
-                          _updateSetting({
-                            'require_approval': value,
-                          });
+                          _updateSetting({'require_approval': value});
                         },
                 ),
 
@@ -5019,7 +5963,13 @@ class _SettingsPageState extends State<SettingsPage> {
                     'CV, certificates and application documents',
                   ),
                   trailing: const Icon(Icons.chevron_right_rounded),
-                  onTap: () => _showComingSoon('Documents'),
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute<void>(
+                        builder: (_) => const DocumentsPage(),
+                      ),
+                    );
+                  },
                 ),
 
                 const Divider(height: 1),
@@ -5072,10 +6022,7 @@ class _SettingsPageState extends State<SettingsPage> {
               children: [
                 const Text(
                   'Minimum Match Score',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 12),
                 ...options.map(
@@ -5087,9 +6034,7 @@ class _SettingsPageState extends State<SettingsPage> {
                         : null,
                     onTap: () {
                       Navigator.pop(sheetContext);
-                      _updateSetting({
-                        'minimum_match_score': score,
-                      });
+                      _updateSetting({'minimum_match_score': score});
                     },
                   ),
                 ),
@@ -5117,10 +6062,7 @@ class _SettingsPageState extends State<SettingsPage> {
               children: [
                 const Text(
                   'Daily Application Limit',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 12),
                 ...options.map(
@@ -5132,9 +6074,7 @@ class _SettingsPageState extends State<SettingsPage> {
                         : null,
                     onTap: () {
                       Navigator.pop(sheetContext);
-                      _updateSetting({
-                        'daily_application_limit': limit,
-                      });
+                      _updateSetting({'daily_application_limit': limit});
                     },
                   ),
                 ),

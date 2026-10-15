@@ -18,7 +18,7 @@ HEADERS = {
         "Chrome/147.0.0.0 Safari/537.36"
     )
 }
-TIMEOUT = 15
+TIMEOUT = 8
 
 EXPLICIT_LOCATION_TOKENS = (
     "germany",

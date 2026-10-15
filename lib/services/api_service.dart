@@ -1,15 +1,109 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class ApiService {
   static const String baseUrl = 'https://trippie-auto-ai.vercel.app';
+
+  static const String _tokenKey = 'trippie_backend_access_token';
+  static const FlutterSecureStorage _secureStorage = FlutterSecureStorage();
+
+  static Future<Map<String, String>> _requestHeaders(
+    Map<String, String>? supplied,
+  ) async {
+    final token = await _secureStorage.read(key: _tokenKey);
+    return <String, String>{
+      if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
+      ...?supplied,
+    };
+  }
+
+  static Future<Map<String, dynamic>> getCurrentUser() async {
+    final response = await _get(Uri.parse('$baseUrl/api/auth/me'));
+
+    if (response.statusCode == 401 || response.statusCode == 403) {
+      throw Exception('Your session has expired. Please sign in again.');
+    }
+
+    if (response.statusCode != 200) {
+      throw Exception(
+        'Unable to verify your account (${response.statusCode}).',
+      );
+    }
+
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map) {
+      throw Exception('Invalid account response from the server.');
+    }
+
+    final user = Map<String, dynamic>.from(decoded);
+    if (user['id'] is! num) {
+      throw Exception('The server did not return a valid user ID.');
+    }
+
+    return user;
+  }
+
+  static Future<int> getCurrentUserId() async {
+    final user = await getCurrentUser();
+    return (user['id'] as num).toInt();
+  }
+
+  static Future<http.Response> _get(
+    Uri uri, {
+    Map<String, String>? headers,
+  }) async {
+    return http.get(uri, headers: await _requestHeaders(headers));
+  }
+
+  static Future<http.Response> _post(
+    Uri uri, {
+    Map<String, String>? headers,
+    Object? body,
+    Encoding? encoding,
+  }) async {
+    return http.post(
+      uri,
+      headers: await _requestHeaders(headers),
+      body: body,
+      encoding: encoding,
+    );
+  }
+
+  static Future<http.Response> _put(
+    Uri uri, {
+    Map<String, String>? headers,
+    Object? body,
+    Encoding? encoding,
+  }) async {
+    return http.put(
+      uri,
+      headers: await _requestHeaders(headers),
+      body: body,
+      encoding: encoding,
+    );
+  }
+
+  static Future<http.Response> _patch(
+    Uri uri, {
+    Map<String, String>? headers,
+    Object? body,
+    Encoding? encoding,
+  }) async {
+    return http.patch(
+      uri,
+      headers: await _requestHeaders(headers),
+      body: body,
+      encoding: encoding,
+    );
+  }
 
   static Future<Map<String, dynamic>> prepareApplication(
     int userId,
     int jobId,
   ) async {
-    final response = await http.post(
+    final response = await _post(
       Uri.parse('$baseUrl/api/applications/$userId/prepare/$jobId'),
     );
 
@@ -35,7 +129,7 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> getJobs() async {
-    final response = await http.get(Uri.parse('$baseUrl/api/jobs'));
+    final response = await _get(Uri.parse('$baseUrl/api/jobs'));
 
     if (response.statusCode != 200) {
       throw Exception('Failed to load jobs: ${response.statusCode}');
@@ -45,9 +139,7 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> getApplications(int userId) async {
-    final response = await http.get(
-      Uri.parse('$baseUrl/api/applications/$userId'),
-    );
+    final response = await _get(Uri.parse('$baseUrl/api/applications/$userId'));
 
     if (response.statusCode != 200) {
       throw Exception('Failed to load applications: ${response.statusCode}');
@@ -60,7 +152,7 @@ class ApiService {
     int applicationId,
     String status,
   ) async {
-    final response = await http.put(
+    final response = await _put(
       Uri.parse('$baseUrl/api/applications/$applicationId/status'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'status': status}),
@@ -82,9 +174,7 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> syncGmail(int userId) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/api/gmail/sync/$userId'),
-    );
+    final response = await _post(Uri.parse('$baseUrl/api/gmail/sync/$userId'));
 
     final body = jsonDecode(response.body);
 
@@ -100,7 +190,7 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> getEmails(int userId) async {
-    final response = await http.get(Uri.parse('$baseUrl/api/emails/$userId'));
+    final response = await _get(Uri.parse('$baseUrl/api/emails/$userId'));
 
     if (response.statusCode != 200) {
       throw Exception('Failed to load emails: ${response.statusCode}');
@@ -110,7 +200,7 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> getPendingReplies(int userId) async {
-    final response = await http.get(
+    final response = await _get(
       Uri.parse('$baseUrl/api/gmail/replies/$userId'),
     );
 
@@ -133,7 +223,7 @@ class ApiService {
     int userId,
     int emailId,
   ) async {
-    final response = await http.post(
+    final response = await _post(
       Uri.parse('$baseUrl/api/gmail/reply/generate/$userId/$emailId'),
     );
 
@@ -157,7 +247,7 @@ class ApiService {
     int replyId,
     String body,
   ) async {
-    final response = await http.patch(
+    final response = await _patch(
       Uri.parse('$baseUrl/api/gmail/reply/$userId/$replyId'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'body': body}),
@@ -182,7 +272,7 @@ class ApiService {
     int userId,
     int replyId,
   ) async {
-    final response = await http.post(
+    final response = await _post(
       Uri.parse('$baseUrl/api/gmail/reply/approve/$userId/$replyId'),
     );
 
@@ -205,7 +295,7 @@ class ApiService {
     int userId,
     int replyId,
   ) async {
-    final response = await http.post(
+    final response = await _post(
       Uri.parse('$baseUrl/api/gmail/reply/reject/$userId/$replyId'),
     );
 
@@ -225,7 +315,7 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> getAgentStatus(int userId) async {
-    final response = await http.get(Uri.parse('$baseUrl/api/agent/$userId'));
+    final response = await _get(Uri.parse('$baseUrl/api/agent/$userId'));
 
     final body = jsonDecode(response.body);
 
@@ -243,13 +333,11 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> runAgent(int userId) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/api/agent/$userId/run'),
-    );
+    final response = await _post(Uri.parse('$baseUrl/api/agent/$userId/run'));
 
     final body = jsonDecode(response.body);
 
-    if (response.statusCode != 200) {
+    if (response.statusCode != 200 && response.statusCode != 202) {
       final detail = body is Map<String, dynamic>
           ? body['detail']?.toString()
           : null;
@@ -263,9 +351,7 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> stopAgent(int userId) async {
-    final response = await http.post(
-      Uri.parse('$baseUrl/api/agent/$userId/stop'),
-    );
+    final response = await _post(Uri.parse('$baseUrl/api/agent/$userId/stop'));
 
     final body = jsonDecode(response.body);
 
@@ -283,9 +369,7 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> getDashboard(int userId) async {
-    final response = await http.get(
-      Uri.parse('$baseUrl/api/dashboard/$userId'),
-    );
+    final response = await _get(Uri.parse('$baseUrl/api/dashboard/$userId'));
 
     if (response.statusCode != 200) {
       throw Exception('Failed to load dashboard: ${response.statusCode}');
@@ -294,13 +378,8 @@ class ApiService {
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
-
-  static Future<Map<String, dynamic>> getSettings(
-    int userId,
-  ) async {
-    final response = await http.get(
-      Uri.parse('$baseUrl/api/settings/$userId'),
-    );
+  static Future<Map<String, dynamic>> getSettings(int userId) async {
+    final response = await _get(Uri.parse('$baseUrl/api/settings/$userId'));
 
     final body = jsonDecode(response.body);
 
@@ -321,11 +400,9 @@ class ApiService {
     int userId,
     Map<String, dynamic> updates,
   ) async {
-    final response = await http.patch(
+    final response = await _patch(
       Uri.parse('$baseUrl/api/settings/$userId'),
-      headers: {
-        'Content-Type': 'application/json',
-      },
+      headers: {'Content-Type': 'application/json'},
       body: jsonEncode(updates),
     );
 

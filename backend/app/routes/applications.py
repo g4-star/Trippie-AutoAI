@@ -8,6 +8,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.routes.auth import get_current_user
+from app.models.user import User
 from app.models.application import Application
 from app.models.job import Job
 from app.services.application_engine import prepare_application
@@ -73,8 +75,12 @@ def application_response(
 @router.get("/{user_id}")
 def get_user_applications(
     user_id: int,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    if user_id != current_user.id:
+        raise HTTPException(status_code=403, detail='Access denied.')
+
     applications = db.scalars(
         select(Application)
         .where(Application.user_id == user_id)
@@ -104,7 +110,11 @@ def get_application(
     user_id: int,
     application_id: int,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    if user_id != current_user.id:
+        raise HTTPException(status_code=403, detail='Access denied.')
+
     application = db.scalar(
         select(Application)
         .where(
@@ -132,7 +142,11 @@ def prepare_application_endpoint(
     user_id: int,
     job_id: int,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    if user_id != current_user.id:
+        raise HTTPException(status_code=403, detail='Access denied.')
+
     result = prepare_application(
         db=db,
         user_id=user_id,
@@ -171,6 +185,7 @@ def update_application_status(
     application_id: int,
     payload: ApplicationStatusUpdate,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     status = payload.status.strip().lower()
 
@@ -183,7 +198,12 @@ def update_application_status(
             },
         )
 
-    application = db.get(Application, application_id)
+    application = db.scalar(
+        select(Application).where(
+            Application.id == application_id,
+            Application.user_id == current_user.id,
+        )
+    )
 
     if not application:
         raise HTTPException(

@@ -285,7 +285,7 @@ def parse_job_page(url: str) -> dict[str, Any] | None:
     response = requests.get(
         url,
         headers=HEADERS,
-        timeout=30,
+        timeout=5,
     )
 
     response.raise_for_status()
@@ -357,7 +357,7 @@ def discover_job_urls(
         JOBS_URL,
         params=params,
         headers=HEADERS,
-        timeout=30,
+        timeout=5,
     )
 
     response.raise_for_status()

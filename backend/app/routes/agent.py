@@ -1,11 +1,23 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.routes.auth import get_current_user
+from app.models.user import User
 from app.models.settings import Settings
+from app.services.agent_worker import (
+    start_agent_worker,
+    stop_agent_worker,
+    is_agent_worker_alive,
+)
+
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(
@@ -50,8 +62,11 @@ def _agent_response(settings: Settings) -> dict:
     return {
         "user_id": settings.user_id,
         "running": settings.agent_enabled,
+        "worker_alive": is_agent_worker_alive(),
         "status": (
             "running"
+            if settings.agent_enabled and is_agent_worker_alive()
+            else "starting"
             if settings.agent_enabled
             else "stopped"
         ),
@@ -70,8 +85,13 @@ def _agent_response(settings: Settings) -> dict:
 @router.get("/{user_id}")
 def get_agent_status(
     user_id: int,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    if user_id != current_user.id:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail='Access denied.')
+
     settings = _get_or_create_settings(
         user_id,
         db,
@@ -80,11 +100,16 @@ def get_agent_status(
     return _agent_response(settings)
 
 
-@router.post("/{user_id}/run")
+@router.post("/{user_id}/run", status_code=202)
 def run_agent(
     user_id: int,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    if user_id != current_user.id:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail='Access denied.')
+
     settings = _get_or_create_settings(
         user_id,
         db,
@@ -95,15 +120,17 @@ def run_agent(
     db.commit()
     db.refresh(settings)
 
+    if user_id != int(__import__('os').getenv('AUTOAI_USER_ID', '1')):
+        return {
+            "message": "Agent enabled in settings, but the background worker is configured for a different user. Set AUTOAI_USER_ID to this user ID and restart the backend.",
+            "cycle_status": "not_started_wrong_user",
+            **_agent_response(settings),
+        }
+
+    started = start_agent_worker()
     return {
-        "message": "AI Agent started.",
-        "cycle": {
-            "status": "scheduled",
-            "message": (
-                "Background worker will run the next "
-                "agent cycle automatically."
-            ),
-        },
+        "message": "Agent worker started." if started else "Agent worker is already running.",
+        "cycle_status": "started" if started else "already_running",
         **_agent_response(settings),
     }
 
@@ -111,8 +138,13 @@ def run_agent(
 @router.post("/{user_id}/stop")
 def stop_agent(
     user_id: int,
+    current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    if user_id != current_user.id:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=403, detail='Access denied.')
+
     settings = _get_or_create_settings(
         user_id,
         db,
@@ -122,8 +154,10 @@ def stop_agent(
 
     db.commit()
     db.refresh(settings)
+    worker_stopped = stop_agent_worker()
 
     return {
-        "message": "AI Agent stopped.",
+        "message": "AI Agent stopped." if worker_stopped else "Stop requested; current cycle is still finishing.",
+        "worker_stopped": worker_stopped,
         **_agent_response(settings),
     }

@@ -22,5 +22,8 @@ dependencies = [
     "google-api-python-client",
     "google-auth",
     "google-auth-httplib2",
-    "google-auth-oauthlib"
+    "google-auth-oauthlib",
+    "vercel==0.11.6",
+    "python-multipart==0.0.32",
+    "pypdf==6.20.1",
 ]

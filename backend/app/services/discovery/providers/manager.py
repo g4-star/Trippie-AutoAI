@@ -4,17 +4,11 @@ import logging
 
 from .base import DiscoveryProvider
 
-
 logger = logging.getLogger(__name__)
 
 
 class DiscoveryProviderManager:
-    """
-    Runs multiple public discovery providers.
-
-    Providers are isolated from one another: if one provider fails,
-    the remaining providers can continue.
-    """
+    """Query providers fairly while isolating failures and deduplicating URLs."""
 
     def __init__(
         self,
@@ -27,22 +21,23 @@ class DiscoveryProviderManager:
         query: str,
         limit: int = 10,
     ) -> list[dict]:
+        if limit <= 0 or not self.providers:
+            return []
+
         results: list[dict] = []
         seen_urls: set[str] = set()
 
-        if limit <= 0:
-            return results
+        # Give every provider an initial opportunity before filling spare slots.
+        per_provider = max(1, (limit + len(self.providers) - 1) // len(self.providers))
 
         for provider in self.providers:
-            remaining = limit - len(results)
-
-            if remaining <= 0:
+            if len(results) >= limit:
                 break
 
             try:
                 provider_results = provider.search(
                     query=query,
-                    limit=remaining,
+                    limit=per_provider,
                 )
             except Exception as exc:
                 logger.warning(
@@ -54,14 +49,11 @@ class DiscoveryProviderManager:
                 continue
 
             for item in provider_results:
-                job_url = str(
-                    item.get("job_url") or ""
-                ).strip()
-
-                if not job_url:
+                if not isinstance(item, dict):
                     continue
 
-                if job_url in seen_urls:
+                job_url = str(item.get("job_url") or "").strip()
+                if not job_url or job_url in seen_urls:
                     continue
 
                 seen_urls.add(job_url)

@@ -3,6 +3,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.models.user import User
+from app.routes.auth import get_current_user
 from app.models.email import Email
 
 
@@ -36,7 +38,11 @@ def email_response(email: Email) -> dict:
 def get_emails(
     user_id: int,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    if user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Forbidden.")
+
     emails = db.scalars(
         select(Email)
         .where(Email.user_id == user_id)
@@ -60,7 +66,11 @@ def get_email(
     user_id: int,
     email_id: int,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
+    if user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Forbidden.")
+
     email = db.scalar(
         select(Email).where(
             Email.id == email_id,
