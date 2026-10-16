@@ -354,7 +354,7 @@ class _LockScreenState extends State<LockScreen> {
   void _openApp() {
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
-        builder: (_) => MainShell(
+        builder: (_) => BackendSessionGate(
           onThemeChanged: widget.onThemeChanged,
           currentTheme: widget.currentTheme,
         ),
@@ -601,6 +601,210 @@ class _LockScreenState extends State<LockScreen> {
   }
 }
 
+
+class BackendSessionGate extends StatefulWidget {
+  final void Function(ThemeMode) onThemeChanged;
+  final ThemeMode currentTheme;
+
+  const BackendSessionGate({
+    super.key,
+    required this.onThemeChanged,
+    required this.currentTheme,
+  });
+
+  @override
+  State<BackendSessionGate> createState() => _BackendSessionGateState();
+}
+
+class _BackendSessionGateState extends State<BackendSessionGate> {
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final _nameController = TextEditingController();
+  bool _registerMode = false;
+  bool _busy = true;
+  bool _navigating = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _restoreSharedSession();
+  }
+
+  Future<void> _restoreSharedSession() async {
+    final restored = await ApiService.restoreSession();
+    if (!mounted) return;
+    if (restored) {
+      _openMainShell();
+    } else {
+      setState(() {
+        _busy = false;
+        _error = null;
+      });
+    }
+  }
+
+  void _openMainShell() {
+    if (!mounted || _navigating) return;
+    _navigating = true;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (_) => MainShell(
+          onThemeChanged: widget.onThemeChanged,
+          currentTheme: widget.currentTheme,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _submit() async {
+    FocusScope.of(context).unfocus();
+    if (_emailController.text.trim().isEmpty ||
+        _passwordController.text.isEmpty ||
+        (_registerMode && _nameController.text.trim().isEmpty)) {
+      setState(() => _error = 'Complete all required fields.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      await ApiService.authenticate(
+        email: _emailController.text,
+        password: _passwordController.text,
+        fullName: _nameController.text,
+        register: _registerMode,
+      );
+      _passwordController.clear();
+      _openMainShell();
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _error = e.toString().replaceFirst('Exception: ', '');
+        });
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    _nameController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Scaffold(
+      appBar: AppBar(title: const Text('TrippieAutoAI account')),
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 460),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Icon(Icons.security_rounded, size: 58, color: colors.primary),
+                const SizedBox(height: 16),
+                Text(
+                  _registerMode ? 'Create your account' : 'Sign in to continue',
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Your app lock is separate from your account. Sign in once '
+                  'to use Dashboard, AI Agent, Jobs, Applications and Documents.',
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 24),
+                if (_registerMode) ...[
+                  TextField(
+                    controller: _nameController,
+                    textCapitalization: TextCapitalization.words,
+                    autofillHints: const [AutofillHints.name],
+                    decoration: const InputDecoration(
+                      labelText: 'Full name',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                TextField(
+                  controller: _emailController,
+                  keyboardType: TextInputType.emailAddress,
+                  autofillHints: const [AutofillHints.username, AutofillHints.email],
+                  decoration: const InputDecoration(
+                    labelText: 'Email',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _passwordController,
+                  obscureText: true,
+                  autofillHints: [
+                    _registerMode ? AutofillHints.newPassword : AutofillHints.password,
+                  ],
+                  decoration: InputDecoration(
+                    labelText: 'Password',
+                    helperText: _registerMode ? 'At least 8 characters' : null,
+                    border: const OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                if (_error != null) ...[
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: colors.errorContainer,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      _error!,
+                      style: TextStyle(color: colors.onErrorContainer),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                FilledButton(
+                  onPressed: _busy ? null : _submit,
+                  child: _busy
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Text(_registerMode ? 'Create account' : 'Sign in'),
+                ),
+                TextButton(
+                  onPressed: _busy
+                      ? null
+                      : () => setState(() {
+                          _registerMode = !_registerMode;
+                          _error = null;
+                        }),
+                  child: Text(
+                    _registerMode
+                        ? 'Already have an account? Sign in'
+                        : 'New account? Create one',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class MainShell extends StatefulWidget {
   final void Function(ThemeMode) onThemeChanged;
   final ThemeMode currentTheme;
@@ -618,15 +822,28 @@ class MainShell extends StatefulWidget {
 class _MainShellState extends State<MainShell> {
   int _currentIndex = 0;
 
+  void _openBackendSignIn() {
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(
+        builder: (_) => BackendSessionGate(
+          onThemeChanged: widget.onThemeChanged,
+          currentTheme: widget.currentTheme,
+        ),
+      ),
+      (_) => false,
+    );
+  }
+
   List<Widget> get _pages => [
     const DashboardPage(),
     const JobsPage(),
     const ApplicationsPage(),
-    const DocumentsPage(),
+    DocumentsPage(onSessionExpired: _openBackendSignIn),
     const EmailPage(),
     SettingsPage(
       onThemeChanged: widget.onThemeChanged,
       currentTheme: widget.currentTheme,
+      onSessionExpired: _openBackendSignIn,
     ),
   ];
 
@@ -5135,11 +5352,13 @@ class _EmailDrawerItem extends StatelessWidget {
 class SettingsPage extends StatefulWidget {
   final void Function(ThemeMode) onThemeChanged;
   final ThemeMode currentTheme;
+  final VoidCallback onSessionExpired;
 
   const SettingsPage({
     super.key,
     required this.onThemeChanged,
     required this.currentTheme,
+    required this.onSessionExpired,
   });
 
   @override
@@ -5972,7 +6191,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   onTap: () {
                     Navigator.of(context).push(
                       MaterialPageRoute<void>(
-                        builder: (_) => const DocumentsPage(),
+                        builder: (_) => DocumentsPage(onSessionExpired: widget.onSessionExpired),
                       ),
                     );
                   },

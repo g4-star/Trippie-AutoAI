@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import get_db
 from app.models.user import User
+from app.models.refresh_session import RefreshSession
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
@@ -30,6 +31,14 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: str = Field(min_length=5, max_length=255)
     password: str = Field(min_length=1, max_length=256)
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str = Field(min_length=20, max_length=512)
+
+
+class LogoutRequest(BaseModel):
+    refresh_token: str | None = Field(default=None, min_length=20, max_length=512)
 
 
 def _normalize_email(email: str) -> str:
@@ -80,6 +89,29 @@ def _make_token(user: User) -> str:
 
 def _public_user(user: User) -> dict:
     return {"id": user.id, "full_name": user.full_name, "email": user.email}
+
+
+def _create_refresh_token(db: Session, user: User) -> str:
+    raw_token = secrets.token_urlsafe(48)
+    db.add(
+        RefreshSession(
+            user_id=user.id,
+            token_hash=hashlib.sha256(raw_token.encode("utf-8")).hexdigest(),
+            expires_at=datetime.utcnow() + timedelta(days=30),
+        )
+    )
+    return raw_token
+
+
+def _token_response(db: Session, user: User) -> dict:
+    refresh_token = _create_refresh_token(db, user)
+    db.commit()
+    return {
+        "user": _public_user(user),
+        "access_token": _make_token(user),
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+    }
 
 
 def get_current_user(
@@ -133,8 +165,7 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
     db.refresh(user)
-    return {"user": _public_user(user), "access_token": _make_token(user),
-            "token_type": "bearer"}
+    return _token_response(db, user)
 
 
 @router.post("/login")
@@ -151,8 +182,59 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
     if not user.is_active:
         raise HTTPException(status_code=403, detail="This account is disabled.")
 
-    return {"user": _public_user(user), "access_token": _make_token(user),
-            "token_type": "bearer"}
+    return _token_response(db, user)
+
+
+@router.post("/refresh")
+def refresh(data: RefreshRequest, db: Session = Depends(get_db)):
+    token_hash = hashlib.sha256(data.refresh_token.encode("utf-8")).hexdigest()
+    session = (
+        db.query(RefreshSession)
+        .filter(RefreshSession.token_hash == token_hash)
+        .first()
+    )
+    now = datetime.utcnow()
+    if (
+        session is None
+        or session.revoked_at is not None
+        or session.expires_at <= now
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh session is invalid or expired.",
+        )
+
+    user = db.query(User).filter(User.id == session.user_id).first()
+    if user is None or not user.is_active:
+        session.revoked_at = now
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account unavailable.")
+
+    # Rotate refresh tokens so a previously used token cannot be replayed.
+    session.revoked_at = now
+    new_refresh_token = _create_refresh_token(db, user)
+    db.commit()
+    return {
+        "user": _public_user(user),
+        "access_token": _make_token(user),
+        "refresh_token": new_refresh_token,
+        "token_type": "bearer",
+    }
+
+
+@router.post("/logout")
+def logout(data: LogoutRequest, db: Session = Depends(get_db)):
+    if data.refresh_token:
+        token_hash = hashlib.sha256(data.refresh_token.encode("utf-8")).hexdigest()
+        session = (
+            db.query(RefreshSession)
+            .filter(RefreshSession.token_hash == token_hash)
+            .first()
+        )
+        if session is not None and session.revoked_at is None:
+            session.revoked_at = datetime.utcnow()
+            db.commit()
+    return {"ok": True}
 
 
 @router.get("/me")

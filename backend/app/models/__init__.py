@@ -13,8 +13,11 @@ __all__ = [
     "Settings",
     "EmailReply",
     "UserDocument",
+    "RefreshSession",
 ]
 
 from .discovery_state import DiscoveryState
 
 from app.models.user_document import UserDocument
+
+from app.models.refresh_session import RefreshSession
