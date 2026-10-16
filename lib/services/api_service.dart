@@ -31,14 +31,14 @@ class ApiService {
     if (register) payload['full_name'] = (fullName ?? '').trim();
 
     final response = await http.post(
-      Uri.parse(baseUrl + '/api/auth/' + (register ? 'register' : 'login')),
+      Uri.parse('$baseUrl/api/auth/${register ? 'register' : 'login'}'),
       headers: const {'Content-Type': 'application/json'},
       body: jsonEncode(payload),
     );
     final decoded = _decodeResponse(response);
     if (response.statusCode != 200 && response.statusCode != 201) {
       final detail = decoded is Map ? decoded['detail']?.toString() : null;
-      throw Exception(detail ?? 'Sign-in failed (' + response.statusCode.toString() + ').');
+      throw Exception(detail ?? 'Sign-in failed (${response.statusCode}).');
     }
     if (decoded is! Map) {
       throw Exception('The server returned an invalid sign-in response.');
@@ -79,7 +79,7 @@ class ApiService {
       if (!await refreshAccessToken()) return false;
     }
     try {
-      final response = await _get(Uri.parse(baseUrl + '/api/auth/me'));
+      final response = await _get(Uri.parse('$baseUrl/api/auth/me'));
       return response.statusCode == 200;
     } catch (_) {
       return false;
@@ -101,7 +101,7 @@ class ApiService {
     if (refreshToken == null || refreshToken.isEmpty) return false;
     try {
       final response = await http.post(
-        Uri.parse(baseUrl + '/api/auth/refresh'),
+        Uri.parse('$baseUrl/api/auth/refresh'),
         headers: const {'Content-Type': 'application/json'},
         body: jsonEncode({'refresh_token': refreshToken}),
       );
@@ -131,7 +131,7 @@ class ApiService {
     if (refreshToken != null && refreshToken.isNotEmpty) {
       try {
         await http.post(
-          Uri.parse(baseUrl + '/api/auth/logout'),
+          Uri.parse('$baseUrl/api/auth/logout'),
           headers: const {'Content-Type': 'application/json'},
           body: jsonEncode({'refresh_token': refreshToken}),
         );
@@ -147,7 +147,7 @@ class ApiService {
   ) async {
     final token = await _secureStorage.read(key: _tokenKey);
     return <String, String>{
-      if (token != null && token.isNotEmpty) 'Authorization': 'Bearer ' + token,
+      if (token != null && token.isNotEmpty) 'Authorization': 'Bearer $token',
       ...?supplied,
     };
   }
@@ -203,12 +203,12 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> getCurrentUser() async {
-    final response = await _get(Uri.parse(baseUrl + '/api/auth/me'));
+    final response = await _get(Uri.parse('$baseUrl/api/auth/me'));
     if (response.statusCode == 401 || response.statusCode == 403) {
       throw Exception('Your session has expired. Please sign in again.');
     }
     if (response.statusCode != 200) {
-      throw Exception('Unable to verify your account (' + response.statusCode.toString() + ').');
+      throw Exception('Unable to verify your account (${response.statusCode}).');
     }
     final decoded = jsonDecode(response.body);
     if (decoded is! Map) {

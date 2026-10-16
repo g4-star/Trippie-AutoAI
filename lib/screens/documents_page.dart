@@ -44,9 +44,9 @@ class _DocumentsPageState extends State<DocumentsPage> {
     try {
       final body = _decodeMap(response.body);
       return body['detail']?.toString() ??
-          'Request failed (' + response.statusCode.toString() + ').';
+          'Request failed (${response.statusCode}).';
     } catch (_) {
-      return 'Request failed (' + response.statusCode.toString() + ').';
+      return 'Request failed (${response.statusCode}).';
     }
   }
 
@@ -158,7 +158,7 @@ class _DocumentsPageState extends State<DocumentsPage> {
       'POST',
       Uri.parse('$_baseUrl/api/documents/cv'),
     );
-    request.headers['Authorization'] = 'Bearer ' + token;
+    request.headers['Authorization'] = 'Bearer $token';
     request.files.add(
       http.MultipartFile.fromBytes('file', bytes, filename: filename),
     );
