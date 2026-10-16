@@ -620,7 +620,9 @@ class _BackendSessionGateState extends State<BackendSessionGate> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _nameController = TextEditingController();
+  final _setupCodeController = TextEditingController();
   bool _registerMode = false;
+  bool _bootstrapMode = false;
   bool _busy = true;
   bool _navigating = false;
   String? _error;
@@ -659,7 +661,12 @@ class _BackendSessionGateState extends State<BackendSessionGate> {
 
   Future<void> _submit() async {
     FocusScope.of(context).unfocus();
-    if (_emailController.text.trim().isEmpty ||
+    if (_bootstrapMode) {
+      if (_setupCodeController.text.trim().isEmpty) {
+        setState(() => _error = 'Enter the one-time setup code.');
+        return;
+      }
+    } else if (_emailController.text.trim().isEmpty ||
         _passwordController.text.isEmpty ||
         (_registerMode && _nameController.text.trim().isEmpty)) {
       setState(() => _error = 'Complete all required fields.');
@@ -670,13 +677,20 @@ class _BackendSessionGateState extends State<BackendSessionGate> {
       _error = null;
     });
     try {
-      await ApiService.authenticate(
-        email: _emailController.text,
-        password: _passwordController.text,
-        fullName: _nameController.text,
-        register: _registerMode,
-      );
-      _passwordController.clear();
+      if (_bootstrapMode) {
+        await ApiService.bootstrapLegacyAccount(
+          setupCode: _setupCodeController.text.trim(),
+        );
+        _setupCodeController.clear();
+      } else {
+        await ApiService.authenticate(
+          email: _emailController.text,
+          password: _passwordController.text,
+          fullName: _nameController.text,
+          register: _registerMode,
+        );
+        _passwordController.clear();
+      }
       _openMainShell();
     } catch (e) {
       if (mounted) {
@@ -693,6 +707,7 @@ class _BackendSessionGateState extends State<BackendSessionGate> {
     _emailController.dispose();
     _passwordController.dispose();
     _nameController.dispose();
+    _setupCodeController.dispose();
     super.dispose();
   }
 
@@ -713,52 +728,69 @@ class _BackendSessionGateState extends State<BackendSessionGate> {
                 Icon(Icons.security_rounded, size: 58, color: colors.primary),
                 const SizedBox(height: 16),
                 Text(
-                  _registerMode ? 'Create your account' : 'Sign in to continue',
+                  _bootstrapMode
+                      ? 'Connect your existing account'
+                      : (_registerMode ? 'Create your account' : 'Sign in to continue'),
                   textAlign: TextAlign.center,
                   style: Theme.of(context).textTheme.headlineSmall,
                 ),
                 const SizedBox(height: 8),
-                const Text(
-                  'Your app lock is separate from your account. Sign in once '
-                  'to use Dashboard, AI Agent, Jobs, Applications and Documents.',
+                Text(
+                  _bootstrapMode
+                      ? 'Use the one-time setup code configured for your existing backend account. This preserves your jobs, applications and documents.'
+                      : 'Your app lock is separate from your account. Sign in once to use Dashboard, AI Agent, Jobs, Applications and Documents.',
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 24),
-                if (_registerMode) ...[
+                if (_bootstrapMode) ...[
                   TextField(
-                    controller: _nameController,
-                    textCapitalization: TextCapitalization.words,
-                    autofillHints: const [AutofillHints.name],
+                    controller: _setupCodeController,
+                    obscureText: true,
+                    autocorrect: false,
+                    enableSuggestions: false,
                     decoration: const InputDecoration(
-                      labelText: 'Full name',
+                      labelText: 'One-time setup code',
                       border: OutlineInputBorder(),
                     ),
                   ),
                   const SizedBox(height: 12),
-                ],
-                TextField(
-                  controller: _emailController,
-                  keyboardType: TextInputType.emailAddress,
-                  autofillHints: const [AutofillHints.username, AutofillHints.email],
-                  decoration: const InputDecoration(
-                    labelText: 'Email',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _passwordController,
-                  obscureText: true,
-                  autofillHints: [
-                    _registerMode ? AutofillHints.newPassword : AutofillHints.password,
+                ] else ...[
+                  if (_registerMode) ...[
+                    TextField(
+                      controller: _nameController,
+                      textCapitalization: TextCapitalization.words,
+                      autofillHints: const [AutofillHints.name],
+                      decoration: const InputDecoration(
+                        labelText: 'Full name',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
                   ],
-                  decoration: InputDecoration(
-                    labelText: 'Password',
-                    helperText: _registerMode ? 'At least 8 characters' : null,
-                    border: const OutlineInputBorder(),
+                  TextField(
+                    controller: _emailController,
+                    keyboardType: TextInputType.emailAddress,
+                    autofillHints: const [AutofillHints.username, AutofillHints.email],
+                    decoration: const InputDecoration(
+                      labelText: 'Email',
+                      border: OutlineInputBorder(),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 16),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _passwordController,
+                    obscureText: true,
+                    autofillHints: [
+                      _registerMode ? AutofillHints.newPassword : AutofillHints.password,
+                    ],
+                    decoration: InputDecoration(
+                      labelText: 'Password',
+                      helperText: _registerMode ? 'At least 8 characters' : null,
+                      border: const OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
                 if (_error != null) ...[
                   Container(
                     padding: const EdgeInsets.all(12),
@@ -781,19 +813,38 @@ class _BackendSessionGateState extends State<BackendSessionGate> {
                           height: 20,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : Text(_registerMode ? 'Create account' : 'Sign in'),
+                      : Text(
+                          _bootstrapMode
+                              ? 'Connect existing account'
+                              : (_registerMode ? 'Create account' : 'Sign in'),
+                        ),
                 ),
+                if (!_bootstrapMode)
+                  TextButton(
+                    onPressed: _busy
+                        ? null
+                        : () => setState(() {
+                            _registerMode = !_registerMode;
+                            _error = null;
+                          }),
+                    child: Text(
+                      _registerMode
+                          ? 'Already have an account? Sign in'
+                          : 'New account? Create one',
+                    ),
+                  ),
                 TextButton(
                   onPressed: _busy
                       ? null
                       : () => setState(() {
-                          _registerMode = !_registerMode;
+                          _bootstrapMode = !_bootstrapMode;
+                          _registerMode = false;
                           _error = null;
                         }),
                   child: Text(
-                    _registerMode
-                        ? 'Already have an account? Sign in'
-                        : 'New account? Create one',
+                    _bootstrapMode
+                        ? 'Back to sign in'
+                        : 'Have a one-time setup code? Connect existing account',
                   ),
                 ),
               ],

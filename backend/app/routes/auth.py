@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import hmac
+import os
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -9,6 +10,7 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
 from app.database import get_db
@@ -39,6 +41,10 @@ class RefreshRequest(BaseModel):
 
 class LogoutRequest(BaseModel):
     refresh_token: str | None = Field(default=None, min_length=20, max_length=512)
+
+
+class LegacyBootstrapRequest(BaseModel):
+    setup_code: str = Field(min_length=32, max_length=512)
 
 
 def _normalize_email(email: str) -> str:
@@ -183,6 +189,68 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=403, detail="This account is disabled.")
 
     return _token_response(db, user)
+
+
+@router.post("/legacy-bootstrap")
+def legacy_bootstrap(data: LegacyBootstrapRequest, db: Session = Depends(get_db)):
+    """Claim the pre-auth account once, only with an explicitly configured secret."""
+    configured_key = os.getenv("LEGACY_ACCOUNT_BOOTSTRAP_KEY", "").strip()
+    if len(configured_key) < 32:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="One-time account setup is not enabled on this server.",
+        )
+    if not hmac.compare_digest(data.setup_code, configured_key):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="The one-time setup code is invalid.",
+        )
+
+    # Never create a replacement profile: the existing account and its data must remain intact.
+    user = db.query(User).filter(User.id == 1).first()
+    if user is None or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The existing account is unavailable; setup was not completed.",
+        )
+
+    # Use the already-existing refresh_sessions table so this feature does not
+    # require a schema migration or create a new table on preview startup.
+    claim_marker = hashlib.sha256(
+        b"trippie-autoai-legacy-account-bootstrap-claimed-v1"
+    ).hexdigest()
+    if db.query(RefreshSession).filter(RefreshSession.token_hash == claim_marker).first():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="One-time account setup has already been used.",
+        )
+
+    now = datetime.utcnow()
+    db.add(
+        RefreshSession(
+            user_id=user.id,
+            token_hash=claim_marker,
+            expires_at=now + timedelta(days=36500),
+            created_at=now,
+            revoked_at=now,
+        )
+    )
+    refresh_token = _create_refresh_token(db, user)
+    try:
+        # The fixed primary key makes simultaneous claims race safely: only one can commit.
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="One-time account setup has already been used.",
+        )
+    return {
+        "user": _public_user(user),
+        "access_token": _make_token(user),
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+    }
 
 
 @router.post("/refresh")

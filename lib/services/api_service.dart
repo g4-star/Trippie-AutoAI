@@ -60,6 +60,34 @@ class ApiService {
     return Map<String, dynamic>.from(user);
   }
 
+  static Future<Map<String, dynamic>> bootstrapLegacyAccount({
+    required String setupCode,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/api/auth/legacy-bootstrap'),
+      headers: const {'Content-Type': 'application/json'},
+      body: jsonEncode({'setup_code': setupCode}),
+    );
+    final decoded = _decodeResponse(response);
+    if (response.statusCode != 200) {
+      final detail = decoded is Map ? decoded['detail']?.toString() : null;
+      throw Exception(detail ?? 'Account setup failed (${response.statusCode}).');
+    }
+    if (decoded is! Map) {
+      throw Exception('The server returned an invalid setup response.');
+    }
+    final accessToken = decoded['access_token']?.toString();
+    final refreshToken = decoded['refresh_token']?.toString();
+    final user = decoded['user'];
+    if (accessToken == null || accessToken.isEmpty ||
+        refreshToken == null || refreshToken.isEmpty || user is! Map) {
+      throw Exception('The server returned an incomplete setup response.');
+    }
+    await _secureStorage.write(key: _tokenKey, value: accessToken);
+    await _secureStorage.write(key: _refreshTokenKey, value: refreshToken);
+    return Map<String, dynamic>.from(user);
+  }
+
   static dynamic _decodeResponse(http.Response response) {
     try {
       return jsonDecode(response.body);
