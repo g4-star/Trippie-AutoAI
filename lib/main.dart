@@ -354,7 +354,7 @@ class _LockScreenState extends State<LockScreen> {
   void _openApp() {
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
-        builder: (_) => MainShell(
+        builder: (_) => BackendSessionGate(
           onThemeChanged: widget.onThemeChanged,
           currentTheme: widget.currentTheme,
         ),
@@ -601,6 +601,261 @@ class _LockScreenState extends State<LockScreen> {
   }
 }
 
+
+class BackendSessionGate extends StatefulWidget {
+  final void Function(ThemeMode) onThemeChanged;
+  final ThemeMode currentTheme;
+
+  const BackendSessionGate({
+    super.key,
+    required this.onThemeChanged,
+    required this.currentTheme,
+  });
+
+  @override
+  State<BackendSessionGate> createState() => _BackendSessionGateState();
+}
+
+class _BackendSessionGateState extends State<BackendSessionGate> {
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  final _nameController = TextEditingController();
+  final _setupCodeController = TextEditingController();
+  bool _registerMode = false;
+  bool _bootstrapMode = false;
+  bool _busy = true;
+  bool _navigating = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _restoreSharedSession();
+  }
+
+  Future<void> _restoreSharedSession() async {
+    final restored = await ApiService.restoreSession();
+    if (!mounted) return;
+    if (restored) {
+      _openMainShell();
+    } else {
+      setState(() {
+        _busy = false;
+        _error = null;
+      });
+    }
+  }
+
+  void _openMainShell() {
+    if (!mounted || _navigating) return;
+    _navigating = true;
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (_) => MainShell(
+          onThemeChanged: widget.onThemeChanged,
+          currentTheme: widget.currentTheme,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _submit() async {
+    FocusScope.of(context).unfocus();
+    if (_bootstrapMode) {
+      if (_setupCodeController.text.trim().isEmpty) {
+        setState(() => _error = 'Enter the one-time setup code.');
+        return;
+      }
+    } else if (_emailController.text.trim().isEmpty ||
+        _passwordController.text.isEmpty ||
+        (_registerMode && _nameController.text.trim().isEmpty)) {
+      setState(() => _error = 'Complete all required fields.');
+      return;
+    }
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    try {
+      if (_bootstrapMode) {
+        await ApiService.bootstrapLegacyAccount(
+          setupCode: _setupCodeController.text.trim(),
+        );
+        _setupCodeController.clear();
+      } else {
+        await ApiService.authenticate(
+          email: _emailController.text,
+          password: _passwordController.text,
+          fullName: _nameController.text,
+          register: _registerMode,
+        );
+        _passwordController.clear();
+      }
+      _openMainShell();
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _error = e.toString().replaceFirst('Exception: ', '');
+        });
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    _nameController.dispose();
+    _setupCodeController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = Theme.of(context).colorScheme;
+    return Scaffold(
+      appBar: AppBar(title: const Text('TrippieAutoAI account')),
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 460),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Icon(Icons.security_rounded, size: 58, color: colors.primary),
+                const SizedBox(height: 16),
+                Text(
+                  _bootstrapMode
+                      ? 'Connect your existing account'
+                      : (_registerMode ? 'Create your account' : 'Sign in to continue'),
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  _bootstrapMode
+                      ? 'Use the one-time setup code configured for your existing backend account. This preserves your jobs, applications and documents.'
+                      : 'Your app lock is separate from your account. Sign in once to use Dashboard, AI Agent, Jobs, Applications and Documents.',
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 24),
+                if (_bootstrapMode) ...[
+                  TextField(
+                    controller: _setupCodeController,
+                    obscureText: true,
+                    autocorrect: false,
+                    enableSuggestions: false,
+                    decoration: const InputDecoration(
+                      labelText: 'One-time setup code',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ] else ...[
+                  if (_registerMode) ...[
+                    TextField(
+                      controller: _nameController,
+                      textCapitalization: TextCapitalization.words,
+                      autofillHints: const [AutofillHints.name],
+                      decoration: const InputDecoration(
+                        labelText: 'Full name',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  TextField(
+                    controller: _emailController,
+                    keyboardType: TextInputType.emailAddress,
+                    autofillHints: const [AutofillHints.username, AutofillHints.email],
+                    decoration: const InputDecoration(
+                      labelText: 'Email',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _passwordController,
+                    obscureText: true,
+                    autofillHints: [
+                      _registerMode ? AutofillHints.newPassword : AutofillHints.password,
+                    ],
+                    decoration: InputDecoration(
+                      labelText: 'Password',
+                      helperText: _registerMode ? 'At least 8 characters' : null,
+                      border: const OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                ],
+                if (_error != null) ...[
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: colors.errorContainer,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      _error!,
+                      style: TextStyle(color: colors.onErrorContainer),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                FilledButton(
+                  onPressed: _busy ? null : _submit,
+                  child: _busy
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : Text(
+                          _bootstrapMode
+                              ? 'Connect existing account'
+                              : (_registerMode ? 'Create account' : 'Sign in'),
+                        ),
+                ),
+                if (!_bootstrapMode)
+                  TextButton(
+                    onPressed: _busy
+                        ? null
+                        : () => setState(() {
+                            _registerMode = !_registerMode;
+                            _error = null;
+                          }),
+                    child: Text(
+                      _registerMode
+                          ? 'Already have an account? Sign in'
+                          : 'New account? Create one',
+                    ),
+                  ),
+                TextButton(
+                  onPressed: _busy
+                      ? null
+                      : () => setState(() {
+                          _bootstrapMode = !_bootstrapMode;
+                          _registerMode = false;
+                          _error = null;
+                        }),
+                  child: Text(
+                    _bootstrapMode
+                        ? 'Back to sign in'
+                        : 'Have a one-time setup code? Connect existing account',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class MainShell extends StatefulWidget {
   final void Function(ThemeMode) onThemeChanged;
   final ThemeMode currentTheme;
@@ -618,15 +873,28 @@ class MainShell extends StatefulWidget {
 class _MainShellState extends State<MainShell> {
   int _currentIndex = 0;
 
+  void _openBackendSignIn() {
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(
+        builder: (_) => BackendSessionGate(
+          onThemeChanged: widget.onThemeChanged,
+          currentTheme: widget.currentTheme,
+        ),
+      ),
+      (_) => false,
+    );
+  }
+
   List<Widget> get _pages => [
     const DashboardPage(),
     const JobsPage(),
     const ApplicationsPage(),
-    const DocumentsPage(),
+    DocumentsPage(onSessionExpired: _openBackendSignIn),
     const EmailPage(),
     SettingsPage(
       onThemeChanged: widget.onThemeChanged,
       currentTheme: widget.currentTheme,
+      onSessionExpired: _openBackendSignIn,
     ),
   ];
 
@@ -5135,11 +5403,13 @@ class _EmailDrawerItem extends StatelessWidget {
 class SettingsPage extends StatefulWidget {
   final void Function(ThemeMode) onThemeChanged;
   final ThemeMode currentTheme;
+  final VoidCallback onSessionExpired;
 
   const SettingsPage({
     super.key,
     required this.onThemeChanged,
     required this.currentTheme,
+    required this.onSessionExpired,
   });
 
   @override
@@ -5972,7 +6242,7 @@ class _SettingsPageState extends State<SettingsPage> {
                   onTap: () {
                     Navigator.of(context).push(
                       MaterialPageRoute<void>(
-                        builder: (_) => const DocumentsPage(),
+                        builder: (_) => DocumentsPage(onSessionExpired: widget.onSessionExpired),
                       ),
                     );
                   },
@@ -6209,107 +6479,6 @@ class _SettingsCard extends StatelessWidget {
           border: Border.all(color: const Color(0xFF222938)),
         ),
         child: Column(children: children),
-      ),
-    );
-  }
-}
-
-class _StatCard extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final String value;
-
-  const _StatCard({
-    required this.icon,
-    required this.label,
-    required this.value,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: const Color(0xFF11151F),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFF222938)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(icon, size: 21, color: Colors.deepPurpleAccent),
-          const SizedBox(height: 12),
-          Text(
-            value,
-            style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 3),
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.white.withValues(alpha: 0.55),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _ActivityItem extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String subtitle;
-
-  const _ActivityItem({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(15),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0F131C),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFF1E2532)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 42,
-            height: 42,
-            decoration: BoxDecoration(
-              color: Colors.deepPurple.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Icon(icon, color: Colors.deepPurpleAccent, size: 21),
-          ),
-          const SizedBox(width: 13),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
-                ),
-                const SizedBox(height: 3),
-                Text(
-                  subtitle,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.white.withValues(alpha: 0.5),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ],
       ),
     );
   }

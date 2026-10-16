@@ -3,11 +3,14 @@ import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
+import '../services/api_service.dart';
+
 class DocumentsPage extends StatefulWidget {
-  const DocumentsPage({super.key});
+  final VoidCallback? onSessionExpired;
+
+  const DocumentsPage({super.key, this.onSessionExpired});
 
   @override
   State<DocumentsPage> createState() => _DocumentsPageState();
@@ -15,19 +18,12 @@ class DocumentsPage extends StatefulWidget {
 
 class _DocumentsPageState extends State<DocumentsPage> {
   static const _baseUrl = 'https://trippie-auto-ai.vercel.app';
-  static const _tokenKey = 'trippie_backend_access_token';
-  static const _storage = FlutterSecureStorage();
-
-  final _email = TextEditingController();
-  final _password = TextEditingController();
-  final _name = TextEditingController();
 
   String? _token;
   Map<String, dynamic>? _user;
   Map<String, dynamic>? _document;
   Uint8List? _selectedBytes;
   String? _selectedFilename;
-  bool _registerMode = false;
   bool _loading = true;
   bool _busy = false;
   String? _error;
@@ -37,14 +33,6 @@ class _DocumentsPageState extends State<DocumentsPage> {
   void initState() {
     super.initState();
     _restoreSession();
-  }
-
-  @override
-  void dispose() {
-    _email.dispose();
-    _password.dispose();
-    _name.dispose();
-    super.dispose();
   }
 
   Map<String, dynamic> _decodeMap(String body) {
@@ -63,102 +51,48 @@ class _DocumentsPageState extends State<DocumentsPage> {
   }
 
   Future<void> _restoreSession() async {
-    final token = await _storage.read(key: _tokenKey);
-    if (token == null || token.isEmpty) {
-      if (mounted) setState(() => _loading = false);
-      return;
-    }
-
-    _token = token;
     try {
-      final response = await http.get(
-        Uri.parse('$_baseUrl/api/auth/me'),
-        headers: {'Authorization': 'Bearer $token'},
-      );
-      if (response.statusCode == 200) {
-        _user = _decodeMap(response.body);
-        await _loadDocument();
-      } else {
-        await _storage.delete(key: _tokenKey);
-        _token = null;
-        _error = 'Your session expired. Please sign in again.';
+      final restored = await ApiService.restoreSession();
+      if (!restored) {
+        if (mounted) {
+          setState(() {
+            _loading = false;
+            _token = null;
+            _error = 'Your shared account session is unavailable. Sign in from the app entry screen to continue.';
+          });
+        }
+        return;
       }
-    } catch (_) {
-      _error = 'Could not connect to the service. Check your internet.';
-    }
-
-    if (mounted) setState(() => _loading = false);
-  }
-
-  Future<void> _authenticate() async {
-    FocusScope.of(context).unfocus();
-    setState(() {
-      _busy = true;
-      _error = null;
-      _notice = null;
-    });
-
-    try {
-      final endpoint = _registerMode ? 'register' : 'login';
-      final payload = <String, dynamic>{
-        'email': _email.text.trim(),
-        'password': _password.text,
-      };
-      if (_registerMode) payload['full_name'] = _name.text.trim();
-
-      final response = await http.post(
-        Uri.parse('$_baseUrl/api/auth/$endpoint'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(payload),
-      );
-
-      if (response.statusCode != 200 && response.statusCode != 201) {
-        throw Exception(_message(response));
-      }
-
-      final result = _decodeMap(response.body);
-      final token = result['access_token']?.toString();
-      final user = result['user'];
-
-      if (token == null || token.isEmpty || user is! Map<String, dynamic>) {
-        throw Exception('The server returned an invalid login response.');
-      }
-
-      await _storage.write(key: _tokenKey, value: token);
-      _token = token;
-      _user = user;
-      _password.clear();
-
+      _token = await ApiService.getAccessToken();
+      _user = await ApiService.getCurrentUser();
       await _loadDocument();
     } catch (e) {
       _error = e.toString().replaceFirst('Exception: ', '');
-    } finally {
-      if (mounted) setState(() => _busy = false);
     }
+    if (mounted) setState(() => _loading = false);
   }
 
-  Future<http.Response> _authorizedRequest(String method, String path) async {
-    final token = _token;
-    if (token == null) throw Exception('Please sign in again.');
+  Future<http.Response> _authorizedRequest(String method, String path) =>
+      ApiService.authorizedRequest(method, path);
 
-    final uri = Uri.parse('$_baseUrl$path');
-    final headers = {'Authorization': 'Bearer $token'};
-
-    switch (method) {
-      case 'GET':
-        return http.get(uri, headers: headers);
-      case 'DELETE':
-        return http.delete(uri, headers: headers);
-      default:
-        throw Exception('Unsupported request.');
-    }
+  Future<void> _handleExpiredSession() async {
+    await ApiService.clearSession();
+    if (!mounted) return;
+    setState(() {
+      _token = null;
+      _user = null;
+      _document = null;
+      _error = 'Your shared session expired. Sign in again to access private documents.';
+      _notice = null;
+    });
+    widget.onSessionExpired?.call();
   }
 
   Future<void> _loadDocument() async {
     final response = await _authorizedRequest('GET', '/api/documents/cv');
 
-    if (response.statusCode == 401) {
-      await _signOut(message: 'Your session expired. Sign in again.');
+    if (response.statusCode == 401 || response.statusCode == 403) {
+      await _handleExpiredSession();
       return;
     }
     if (response.statusCode != 200) throw Exception(_message(response));
@@ -215,12 +149,26 @@ class _DocumentsPageState extends State<DocumentsPage> {
     }
   }
 
+  Future<http.Response> _sendCvUpload(
+    Uint8List bytes,
+    String filename,
+    String token,
+  ) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$_baseUrl/api/documents/cv'),
+    );
+    request.headers['Authorization'] = 'Bearer $token';
+    request.files.add(
+      http.MultipartFile.fromBytes('file', bytes, filename: filename),
+    );
+    return http.Response.fromStream(await request.send());
+  }
+
   Future<void> _uploadCv() async {
     final bytes = _selectedBytes;
     final filename = _selectedFilename;
-    final token = _token;
-
-    if (bytes == null || filename == null || token == null) return;
+    if (bytes == null || filename == null) return;
 
     setState(() {
       _busy = true;
@@ -229,20 +177,20 @@ class _DocumentsPageState extends State<DocumentsPage> {
     });
 
     try {
-      final request = http.MultipartRequest(
-        'POST',
-        Uri.parse('$_baseUrl/api/documents/cv'),
-      );
-      request.headers['Authorization'] = 'Bearer $token';
-      request.files.add(
-        http.MultipartFile.fromBytes('file', bytes, filename: filename),
-      );
-
-      final streamed = await request.send();
-      final response = await http.Response.fromStream(streamed);
-
-      if (response.statusCode == 401) {
-        await _signOut(message: 'Your session expired. Sign in again.');
+      var token = await ApiService.getAccessToken();
+      if (token == null || token.isEmpty) {
+        await _handleExpiredSession();
+        return;
+      }
+      var response = await _sendCvUpload(bytes, filename, token);
+      if (response.statusCode == 401 && await ApiService.refreshAccessToken()) {
+        token = (await ApiService.getAccessToken()) ?? '';
+        if (token.isNotEmpty) {
+          response = await _sendCvUpload(bytes, filename, token);
+        }
+      }
+      if (response.statusCode == 401 || response.statusCode == 403) {
+        await _handleExpiredSession();
         return;
       }
       if (response.statusCode != 200 && response.statusCode != 201) {
@@ -274,8 +222,8 @@ class _DocumentsPageState extends State<DocumentsPage> {
         '/api/documents/cv/download',
       );
 
-      if (response.statusCode == 401) {
-        await _signOut(message: 'Your session expired. Sign in again.');
+      if (response.statusCode == 401 || response.statusCode == 403) {
+        await _handleExpiredSession();
         return;
       }
       if (response.statusCode != 200) throw Exception(_message(response));
@@ -328,8 +276,8 @@ class _DocumentsPageState extends State<DocumentsPage> {
 
     try {
       final response = await _authorizedRequest('DELETE', '/api/documents/cv');
-      if (response.statusCode == 401) {
-        await _signOut(message: 'Your session expired. Sign in again.');
+      if (response.statusCode == 401 || response.statusCode == 403) {
+        await _handleExpiredSession();
         return;
       }
       if (response.statusCode != 204 && response.statusCode != 200) {
@@ -345,20 +293,6 @@ class _DocumentsPageState extends State<DocumentsPage> {
     }
   }
 
-  Future<void> _signOut({String? message}) async {
-    await _storage.delete(key: _tokenKey);
-    _token = null;
-    _user = null;
-    _document = null;
-    _selectedBytes = null;
-    _selectedFilename = null;
-    if (!mounted) return;
-    setState(() {
-      _error = message;
-      _notice = null;
-    });
-  }
-
   String _formatSize(dynamic value) {
     final bytes = value is num ? value.toInt() : 0;
     if (bytes < 1024) return '$bytes B';
@@ -370,108 +304,41 @@ class _DocumentsPageState extends State<DocumentsPage> {
     final colors = Theme.of(context).colorScheme;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Private Documents'),
-        actions: [
-          if (_token != null)
-            IconButton(
-              tooltip: 'Sign out of document storage',
-              onPressed: _busy ? null : () => _signOut(),
-              icon: const Icon(Icons.logout_rounded),
-            ),
-        ],
-      ),
+      appBar: AppBar(title: const Text('Private Documents')),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _token == null
-          ? _buildAuth(colors)
+          ? _buildSessionRequired(colors)
           : _buildDocuments(colors),
     );
   }
 
-  Widget _buildAuth(ColorScheme colors) {
+  Widget _buildSessionRequired(ColorScheme colors) {
     return ListView(
       padding: const EdgeInsets.all(24),
       children: [
-        const Icon(Icons.lock_person_rounded, size: 58),
+        Icon(Icons.lock_person_rounded, size: 54, color: colors.primary),
         const SizedBox(height: 16),
         Text(
-          _registerMode ? 'Create your account' : 'Sign in to Documents',
+          'Private documents need your shared account session',
           textAlign: TextAlign.center,
-          style: Theme.of(context).textTheme.headlineSmall,
+          style: Theme.of(context).textTheme.titleLarge,
         ),
         const SizedBox(height: 8),
         const Text(
-          'Your documents are tied to your authenticated backend account. '
-          'Your app PIN does not sign you in here.',
+          'Documents no longer has a separate sign-in. Sign in once at the app entry screen, then return here.',
           textAlign: TextAlign.center,
         ),
-        const SizedBox(height: 24),
-        if (_registerMode) ...[
-          TextField(
-            controller: _name,
-            textCapitalization: TextCapitalization.words,
-            decoration: const InputDecoration(
-              labelText: 'Full name',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          const SizedBox(height: 12),
+        if (_error != null) ...[
+          const SizedBox(height: 16),
+          _messageBox(_error!, colors.error),
         ],
-        TextField(
-          controller: _email,
-          keyboardType: TextInputType.emailAddress,
-          autofillHints: const [AutofillHints.username, AutofillHints.email],
-          decoration: const InputDecoration(
-            labelText: 'Email',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          controller: _password,
-          obscureText: true,
-          autofillHints: [
-            _registerMode ? AutofillHints.newPassword : AutofillHints.password,
-          ],
-          decoration: InputDecoration(
-            labelText: 'Password',
-            helperText: _registerMode ? 'At least 8 characters' : null,
-            border: const OutlineInputBorder(),
-          ),
-        ),
         const SizedBox(height: 16),
-        if (_error != null) _messageBox(_error!, colors.error),
-        FilledButton(
-          onPressed: _busy ? null : _authenticate,
-          child: _busy
-              ? const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : Text(_registerMode ? 'Create account' : 'Sign in'),
+        OutlinedButton.icon(
+          onPressed: widget.onSessionExpired,
+          icon: const Icon(Icons.login_rounded),
+          label: const Text('Return to shared sign-in'),
         ),
-        TextButton(
-          onPressed: _busy
-              ? null
-              : () => setState(() {
-                  _registerMode = !_registerMode;
-                  _error = null;
-                }),
-          child: Text(
-            _registerMode
-                ? 'Already have an account? Sign in'
-                : 'New backend account? Create one',
-          ),
-        ),
-        if (_registerMode)
-          const Text(
-            'If your email already belongs to an existing job profile, '
-            'registration will be rejected. Do not create another account '
-            'to bypass that check.',
-            textAlign: TextAlign.center,
-          ),
       ],
     );
   }

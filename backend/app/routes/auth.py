@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import hmac
+import os
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -9,10 +10,12 @@ from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import IntegrityError
 
 from app.config import settings
 from app.database import get_db
 from app.models.user import User
+from app.models.refresh_session import RefreshSession
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/login")
@@ -30,6 +33,18 @@ class RegisterRequest(BaseModel):
 class LoginRequest(BaseModel):
     email: str = Field(min_length=5, max_length=255)
     password: str = Field(min_length=1, max_length=256)
+
+
+class RefreshRequest(BaseModel):
+    refresh_token: str = Field(min_length=20, max_length=512)
+
+
+class LogoutRequest(BaseModel):
+    refresh_token: str | None = Field(default=None, min_length=20, max_length=512)
+
+
+class LegacyBootstrapRequest(BaseModel):
+    setup_code: str = Field(min_length=32, max_length=512)
 
 
 def _normalize_email(email: str) -> str:
@@ -80,6 +95,29 @@ def _make_token(user: User) -> str:
 
 def _public_user(user: User) -> dict:
     return {"id": user.id, "full_name": user.full_name, "email": user.email}
+
+
+def _create_refresh_token(db: Session, user: User) -> str:
+    raw_token = secrets.token_urlsafe(48)
+    db.add(
+        RefreshSession(
+            user_id=user.id,
+            token_hash=hashlib.sha256(raw_token.encode("utf-8")).hexdigest(),
+            expires_at=datetime.utcnow() + timedelta(days=30),
+        )
+    )
+    return raw_token
+
+
+def _token_response(db: Session, user: User) -> dict:
+    refresh_token = _create_refresh_token(db, user)
+    db.commit()
+    return {
+        "user": _public_user(user),
+        "access_token": _make_token(user),
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+    }
 
 
 def get_current_user(
@@ -133,8 +171,7 @@ def register(data: RegisterRequest, db: Session = Depends(get_db)):
     db.add(user)
     db.commit()
     db.refresh(user)
-    return {"user": _public_user(user), "access_token": _make_token(user),
-            "token_type": "bearer"}
+    return _token_response(db, user)
 
 
 @router.post("/login")
@@ -151,8 +188,121 @@ def login(data: LoginRequest, db: Session = Depends(get_db)):
     if not user.is_active:
         raise HTTPException(status_code=403, detail="This account is disabled.")
 
-    return {"user": _public_user(user), "access_token": _make_token(user),
-            "token_type": "bearer"}
+    return _token_response(db, user)
+
+
+@router.post("/legacy-bootstrap")
+def legacy_bootstrap(data: LegacyBootstrapRequest, db: Session = Depends(get_db)):
+    """Claim the pre-auth account once, only with an explicitly configured secret."""
+    configured_key = os.getenv("LEGACY_ACCOUNT_BOOTSTRAP_KEY", "").strip()
+    if len(configured_key) < 32:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="One-time account setup is not enabled on this server.",
+        )
+    if not hmac.compare_digest(data.setup_code, configured_key):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="The one-time setup code is invalid.",
+        )
+
+    # Never create a replacement profile: the existing account and its data must remain intact.
+    user = db.query(User).filter(User.id == 1).first()
+    if user is None or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The existing account is unavailable; setup was not completed.",
+        )
+
+    # Use the already-existing refresh_sessions table so this feature does not
+    # require a schema migration or create a new table on preview startup.
+    claim_marker = hashlib.sha256(
+        b"trippie-autoai-legacy-account-bootstrap-claimed-v1"
+    ).hexdigest()
+    if db.query(RefreshSession).filter(RefreshSession.token_hash == claim_marker).first():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="One-time account setup has already been used.",
+        )
+
+    now = datetime.utcnow()
+    db.add(
+        RefreshSession(
+            user_id=user.id,
+            token_hash=claim_marker,
+            expires_at=now + timedelta(days=36500),
+            created_at=now,
+            revoked_at=now,
+        )
+    )
+    refresh_token = _create_refresh_token(db, user)
+    try:
+        # The fixed primary key makes simultaneous claims race safely: only one can commit.
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="One-time account setup has already been used.",
+        )
+    return {
+        "user": _public_user(user),
+        "access_token": _make_token(user),
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+    }
+
+
+@router.post("/refresh")
+def refresh(data: RefreshRequest, db: Session = Depends(get_db)):
+    token_hash = hashlib.sha256(data.refresh_token.encode("utf-8")).hexdigest()
+    session = (
+        db.query(RefreshSession)
+        .filter(RefreshSession.token_hash == token_hash)
+        .first()
+    )
+    now = datetime.utcnow()
+    if (
+        session is None
+        or session.revoked_at is not None
+        or session.expires_at <= now
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh session is invalid or expired.",
+        )
+
+    user = db.query(User).filter(User.id == session.user_id).first()
+    if user is None or not user.is_active:
+        session.revoked_at = now
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account unavailable.")
+
+    # Rotate refresh tokens so a previously used token cannot be replayed.
+    session.revoked_at = now
+    new_refresh_token = _create_refresh_token(db, user)
+    db.commit()
+    return {
+        "user": _public_user(user),
+        "access_token": _make_token(user),
+        "refresh_token": new_refresh_token,
+        "token_type": "bearer",
+    }
+
+
+@router.post("/logout")
+def logout(data: LogoutRequest, db: Session = Depends(get_db)):
+    if data.refresh_token:
+        token_hash = hashlib.sha256(data.refresh_token.encode("utf-8")).hexdigest()
+        session = (
+            db.query(RefreshSession)
+            .filter(RefreshSession.token_hash == token_hash)
+            .first()
+        )
+        if session is not None and session.revoked_at is None:
+            session.revoked_at = datetime.utcnow()
+            db.commit()
+    return {"ok": True}
 
 
 @router.get("/me")

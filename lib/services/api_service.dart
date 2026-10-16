@@ -5,9 +5,170 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class ApiService {
   static const String baseUrl = 'https://trippie-auto-ai.vercel.app';
-
   static const String _tokenKey = 'trippie_backend_access_token';
+  static const String _refreshTokenKey = 'trippie_backend_refresh_token';
   static const FlutterSecureStorage _secureStorage = FlutterSecureStorage();
+  static Future<bool>? _refreshInFlight;
+
+  static Future<String?> getAccessToken() =>
+      _secureStorage.read(key: _tokenKey);
+
+  static Future<void> clearSession() async {
+    await _secureStorage.delete(key: _tokenKey);
+    await _secureStorage.delete(key: _refreshTokenKey);
+  }
+
+  static Future<Map<String, dynamic>> authenticate({
+    required String email,
+    required String password,
+    String? fullName,
+    bool register = false,
+  }) async {
+    final payload = <String, dynamic>{
+      'email': email.trim(),
+      'password': password,
+    };
+    if (register) payload['full_name'] = (fullName ?? '').trim();
+
+    final response = await http.post(
+      Uri.parse('$baseUrl/api/auth/${register ? 'register' : 'login'}'),
+      headers: const {'Content-Type': 'application/json'},
+      body: jsonEncode(payload),
+    );
+    final decoded = _decodeResponse(response);
+    if (response.statusCode != 200 && response.statusCode != 201) {
+      final detail = decoded is Map ? decoded['detail']?.toString() : null;
+      throw Exception(detail ?? 'Sign-in failed (${response.statusCode}).');
+    }
+    if (decoded is! Map) {
+      throw Exception('The server returned an invalid sign-in response.');
+    }
+
+    final accessToken = decoded['access_token']?.toString();
+    final refreshToken = decoded['refresh_token']?.toString();
+    final user = decoded['user'];
+    if (accessToken == null || accessToken.isEmpty || user is! Map) {
+      throw Exception('The server returned an incomplete sign-in response.');
+    }
+
+    await _secureStorage.write(key: _tokenKey, value: accessToken);
+    if (refreshToken != null && refreshToken.isNotEmpty) {
+      await _secureStorage.write(key: _refreshTokenKey, value: refreshToken);
+    } else {
+      await _secureStorage.delete(key: _refreshTokenKey);
+    }
+    return Map<String, dynamic>.from(user);
+  }
+
+  static Future<Map<String, dynamic>> bootstrapLegacyAccount({
+    required String setupCode,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/api/auth/legacy-bootstrap'),
+      headers: const {'Content-Type': 'application/json'},
+      body: jsonEncode({'setup_code': setupCode}),
+    );
+    final decoded = _decodeResponse(response);
+    if (response.statusCode != 200) {
+      final detail = decoded is Map ? decoded['detail']?.toString() : null;
+      throw Exception(detail ?? 'Account setup failed (${response.statusCode}).');
+    }
+    if (decoded is! Map) {
+      throw Exception('The server returned an invalid setup response.');
+    }
+    final accessToken = decoded['access_token']?.toString();
+    final refreshToken = decoded['refresh_token']?.toString();
+    final user = decoded['user'];
+    if (accessToken == null || accessToken.isEmpty ||
+        refreshToken == null || refreshToken.isEmpty || user is! Map) {
+      throw Exception('The server returned an incomplete setup response.');
+    }
+    await _secureStorage.write(key: _tokenKey, value: accessToken);
+    await _secureStorage.write(key: _refreshTokenKey, value: refreshToken);
+    return Map<String, dynamic>.from(user);
+  }
+
+  static dynamic _decodeResponse(http.Response response) {
+    try {
+      return jsonDecode(response.body);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<bool> restoreSession() async {
+    final access = await _secureStorage.read(key: _tokenKey);
+    final refresh = await _secureStorage.read(key: _refreshTokenKey);
+    if ((access == null || access.isEmpty) &&
+        (refresh == null || refresh.isEmpty)) {
+      return false;
+    }
+    if (access == null || access.isEmpty) {
+      if (!await refreshAccessToken()) return false;
+    }
+    try {
+      final response = await _get(Uri.parse('$baseUrl/api/auth/me'));
+      return response.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<bool> refreshAccessToken() {
+    final existing = _refreshInFlight;
+    if (existing != null) return existing;
+    final pending = _performRefreshAccessToken();
+    _refreshInFlight = pending;
+    return pending.whenComplete(() {
+      if (identical(_refreshInFlight, pending)) _refreshInFlight = null;
+    });
+  }
+
+  static Future<bool> _performRefreshAccessToken() async {
+    final refreshToken = await _secureStorage.read(key: _refreshTokenKey);
+    if (refreshToken == null || refreshToken.isEmpty) return false;
+    try {
+      final response = await http.post(
+        Uri.parse('$baseUrl/api/auth/refresh'),
+        headers: const {'Content-Type': 'application/json'},
+        body: jsonEncode({'refresh_token': refreshToken}),
+      );
+      if (response.statusCode == 401 || response.statusCode == 403) {
+        await clearSession();
+        return false;
+      }
+      if (response.statusCode != 200) return false;
+      final decoded = _decodeResponse(response);
+      if (decoded is! Map) return false;
+      final access = decoded['access_token']?.toString();
+      final rotatedRefresh = decoded['refresh_token']?.toString();
+      if (access == null || access.isEmpty ||
+          rotatedRefresh == null || rotatedRefresh.isEmpty) {
+        return false;
+      }
+      await _secureStorage.write(key: _tokenKey, value: access);
+      await _secureStorage.write(key: _refreshTokenKey, value: rotatedRefresh);
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  static Future<void> signOut() async {
+    final refreshToken = await _secureStorage.read(key: _refreshTokenKey);
+    if (refreshToken != null && refreshToken.isNotEmpty) {
+      try {
+        await http.post(
+          Uri.parse('$baseUrl/api/auth/logout'),
+          headers: const {'Content-Type': 'application/json'},
+          body: jsonEncode({'refresh_token': refreshToken}),
+        );
+      } catch (_) {
+        // Local sign-out must still complete if the network is unavailable.
+      }
+    }
+    await clearSession();
+  }
 
   static Future<Map<String, String>> _requestHeaders(
     Map<String, String>? supplied,
@@ -19,29 +180,72 @@ class ApiService {
     };
   }
 
+  static Future<http.Response> authorizedRequest(
+    String method,
+    String path, {
+    Map<String, String>? headers,
+    Object? body,
+    Encoding? encoding,
+  }) async {
+    final uri = Uri.parse(baseUrl + path);
+    switch (method.toUpperCase()) {
+      case 'GET':
+        return _get(uri, headers: headers);
+      case 'POST':
+        return _post(uri, headers: headers, body: body, encoding: encoding);
+      case 'PUT':
+        return _put(uri, headers: headers, body: body, encoding: encoding);
+      case 'PATCH':
+        return _patch(uri, headers: headers, body: body, encoding: encoding);
+      case 'DELETE':
+        return _sendWithRefresh(
+          uri,
+          headers,
+          (requestHeaders) => http.delete(uri, headers: requestHeaders),
+        );
+      default:
+        throw ArgumentError.value(method, 'method', 'Unsupported HTTP method');
+    }
+  }
+
+  static bool _isAuthEndpoint(Uri uri) =>
+      uri.path.endsWith('/api/auth/login') ||
+      uri.path.endsWith('/api/auth/register') ||
+      uri.path.endsWith('/api/auth/refresh') ||
+      uri.path.endsWith('/api/auth/logout');
+
+  static Future<http.Response> _sendWithRefresh(
+    Uri uri,
+    Map<String, String>? headers,
+    Future<http.Response> Function(Map<String, String>) send,
+  ) async {
+    var requestHeaders = await _requestHeaders(headers);
+    var response = await send(requestHeaders);
+    if (response.statusCode == 401 &&
+        !_isAuthEndpoint(uri) &&
+        await refreshAccessToken()) {
+      requestHeaders = await _requestHeaders(headers);
+      response = await send(requestHeaders);
+    }
+    return response;
+  }
+
   static Future<Map<String, dynamic>> getCurrentUser() async {
     final response = await _get(Uri.parse('$baseUrl/api/auth/me'));
-
     if (response.statusCode == 401 || response.statusCode == 403) {
       throw Exception('Your session has expired. Please sign in again.');
     }
-
     if (response.statusCode != 200) {
-      throw Exception(
-        'Unable to verify your account (${response.statusCode}).',
-      );
+      throw Exception('Unable to verify your account (${response.statusCode}).');
     }
-
     final decoded = jsonDecode(response.body);
     if (decoded is! Map) {
       throw Exception('Invalid account response from the server.');
     }
-
     final user = Map<String, dynamic>.from(decoded);
     if (user['id'] is! num) {
       throw Exception('The server did not return a valid user ID.');
     }
-
     return user;
   }
 
@@ -53,51 +257,35 @@ class ApiService {
   static Future<http.Response> _get(
     Uri uri, {
     Map<String, String>? headers,
-  }) async {
-    return http.get(uri, headers: await _requestHeaders(headers));
-  }
+  }) => _sendWithRefresh(
+    uri, headers, (requestHeaders) => http.get(uri, headers: requestHeaders));
 
   static Future<http.Response> _post(
     Uri uri, {
     Map<String, String>? headers,
     Object? body,
     Encoding? encoding,
-  }) async {
-    return http.post(
-      uri,
-      headers: await _requestHeaders(headers),
-      body: body,
-      encoding: encoding,
-    );
-  }
+  }) => _sendWithRefresh(
+    uri, headers, (requestHeaders) => http.post(
+      uri, headers: requestHeaders, body: body, encoding: encoding));
 
   static Future<http.Response> _put(
     Uri uri, {
     Map<String, String>? headers,
     Object? body,
     Encoding? encoding,
-  }) async {
-    return http.put(
-      uri,
-      headers: await _requestHeaders(headers),
-      body: body,
-      encoding: encoding,
-    );
-  }
+  }) => _sendWithRefresh(
+    uri, headers, (requestHeaders) => http.put(
+      uri, headers: requestHeaders, body: body, encoding: encoding));
 
   static Future<http.Response> _patch(
     Uri uri, {
     Map<String, String>? headers,
     Object? body,
     Encoding? encoding,
-  }) async {
-    return http.patch(
-      uri,
-      headers: await _requestHeaders(headers),
-      body: body,
-      encoding: encoding,
-    );
-  }
+  }) => _sendWithRefresh(
+    uri, headers, (requestHeaders) => http.patch(
+      uri, headers: requestHeaders, body: body, encoding: encoding));
 
   static Future<Map<String, dynamic>> prepareApplication(
     int userId,
