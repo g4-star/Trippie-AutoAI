@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.models.job import Job
 from app.models.user import User
 from app.services.job_analyzer import analyze_job
+from app.services.job_scope import is_target_job
 
 
 def _split_values(value: str | None) -> list[str]:
@@ -505,7 +506,7 @@ def calculate_match(
     responsibilities = analysis["responsibilities"]
 
     # ---------------------------------------------------------
-    # SKILLS — 55
+    # SKILLS â 55
     # ---------------------------------------------------------
 
     skill_hits = _find_skill_matches(
@@ -543,7 +544,7 @@ def calculate_match(
         )
 
     # ---------------------------------------------------------
-    # CATEGORY — 20
+    # CATEGORY â 20
     # ---------------------------------------------------------
 
     category_hits = _find_category_matches(
@@ -567,7 +568,7 @@ def calculate_match(
         )
 
     # ---------------------------------------------------------
-    # RESPONSIBILITIES — 15
+    # RESPONSIBILITIES â 15
     # ---------------------------------------------------------
 
     aligned_responsibilities = (
@@ -601,7 +602,7 @@ def calculate_match(
         )
 
     # ---------------------------------------------------------
-    # LOCATION — 10
+    # LOCATION â 10
     # ---------------------------------------------------------
 
     job_location = _text(job.location)
@@ -715,6 +716,10 @@ def match_jobs_for_user(
         .where(Job.is_active.is_(True))
         .order_by(Job.discovered_at.desc())
     ).all()
+    jobs = [
+        job for job in jobs
+        if is_target_job(job.title, job.description, job.requirements)
+    ]
 
     matches = []
 

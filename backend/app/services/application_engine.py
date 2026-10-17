@@ -10,6 +10,7 @@ from app.models.application import Application
 from app.models.job import Job
 from app.models.user import User
 from app.services.job_matcher import calculate_match
+from app.services.job_scope import is_target_job
 
 
 def _split_values(value: str | None) -> list[str]:
@@ -55,14 +56,37 @@ def _build_cover_letter(
         "and processes required by the role."
     )
 
-    closing = (
-        "While I may not meet every requirement listed in the "
-        "description, I believe my existing skills, willingness to "
-        "learn, flexibility, and commitment to delivering quality "
-        "work would allow me to contribute positively to the team. "
-        "I would appreciate the opportunity to demonstrate my "
-        "capabilities and discuss how I can grow into the role."
-    )
+    experience_requirement = (
+        job.experience_requirements
+        or match.get("experience_requirements")
+        or ""
+    ).strip()
+
+    if experience_requirement:
+        skill_clause = (
+            f"My relevant skills in {skill_text} provide a practical "
+            "foundation for the role. "
+            if skill_text
+            else "My relevant technical skills provide a practical foundation for the role. "
+        )
+        closing = (
+            "Although my professional experience may not yet match the "
+            f"experience level requested ({experience_requirement}), "
+            + skill_clause
+            + "I am committed to learning quickly, being transparent about "
+            "my current capabilities, and contributing dependable work. "
+            "I would welcome the opportunity to demonstrate my skills and "
+            "grow with your team."
+        )
+    else:
+        closing = (
+            "While I may not meet every requirement listed in the "
+            "description, I believe my existing skills, willingness to "
+            "learn, flexibility, and commitment to delivering quality "
+            "work would allow me to contribute positively to the team. "
+            "I would appreciate the opportunity to demonstrate my "
+            "capabilities and discuss how I can grow into the role."
+        )
 
     return (
         f"Dear Hiring Team,\n\n"
@@ -93,6 +117,12 @@ def prepare_application(
         return {
             "success": False,
             "error": "Job not found.",
+        }
+
+    if not is_target_job(job.title, job.description, job.requirements):
+        return {
+            "success": False,
+            "error": "This job is outside TrippieAutoAI's cybersecurity and IT focus.",
         }
 
     existing = db.scalar(
