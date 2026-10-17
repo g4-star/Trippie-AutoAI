@@ -17,6 +17,7 @@ from app.services.discovery.providers import (
 )
 from app.services.discovery.search_planner import build_search_queries
 from app.services.job_discovery import save_discovered_job
+from app.services.job_scope import is_target_job
 
 
 logger = logging.getLogger(__name__)
@@ -200,6 +201,12 @@ def discover_internet_jobs(
         discovered += len(jobs)
 
         for job_data in jobs:
+            if not is_target_job(
+                str(job_data.get("title") or ""),
+                str(job_data.get("description") or ""),
+                str(job_data.get("requirements") or ""),
+            ):
+                continue
 
             source = str(
                 job_data.get("source")

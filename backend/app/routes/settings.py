@@ -67,7 +67,7 @@ def _get_or_create_settings(
         agent_enabled=True,
         automatic_job_discovery=True,
         minimum_match_score=70,
-        automatic_application=False,
+        automatic_application=True,
         daily_application_limit=10,
         email_monitoring=True,
         auto_reply=False,

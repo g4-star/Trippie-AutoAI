@@ -38,7 +38,7 @@ class Settings(Base):
 
     automatic_application: Mapped[bool] = mapped_column(
         Boolean,
-        default=False,
+        default=True,
         nullable=False,
     )
 

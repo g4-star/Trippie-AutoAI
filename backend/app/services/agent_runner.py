@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.models.application import Application
@@ -137,10 +138,29 @@ def run_agent(*, db: Session, user_id: int) -> dict[str, Any]:
         return result
 
     # APPLICATION PREPARATION AND EXISTING SUBMISSION WORKFLOW.
+    # Enforce the daily cap across repeated worker cycles, not just within
+    # one cycle. Every created application record counts as an attempt, even
+    # when the provider requires manual action or submission later fails.
+    today_start = datetime.utcnow().replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    applications_today = db.scalar(
+        select(func.count(Application.id)).where(
+            Application.user_id == user_id,
+            Application.created_at >= today_start,
+        )
+    ) or 0
+    remaining_daily_applications = max(
+        0,
+        int(settings.daily_application_limit) - int(applications_today),
+    )
+
     if settings.automatic_application and is_agent_running(db, user_id):
         prepared_count = 0
 
         for match in eligible_matches:
+            if prepared_count >= remaining_daily_applications:
+                break
             if not is_agent_running(db, user_id):
                 break
 
@@ -183,10 +203,9 @@ def run_agent(*, db: Session, user_id: int) -> dict[str, Any]:
             elif status == "submission_failed":
                 result["jobs"]["applications_failed"] += 1
 
-            if prepared_count >= settings.daily_application_limit:
-                break
-
         result["jobs"]["applications_prepared"] = prepared_count
+        result["jobs"]["daily_limit"] = int(settings.daily_application_limit)
+        result["jobs"]["applications_created_today_before_cycle"] = int(applications_today)
 
     if not is_agent_running(db, user_id):
         result.update(
